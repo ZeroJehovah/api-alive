@@ -37,6 +37,8 @@ func (p CodexProvider) ShellCommand(model string, prompt PromptCase) string {
 		shellQuote(p.Command),
 		"exec",
 		"--model", shellQuote(model),
+		"--skip-git-repo-check",
+		"--ephemeral",
 		shellQuote(prompt.Input),
 	}, " ")
 }
@@ -48,7 +50,8 @@ func (p ClaudeProvider) ShellCommand(model string, prompt PromptCase) string {
 	return strings.Join([]string{
 		shellQuote(p.Command),
 		"--model", shellQuote(model),
-		"-p", shellQuote(prompt.Input),
+		"--print",
+		shellQuote(prompt.Input),
 	}, " ")
 }
 
