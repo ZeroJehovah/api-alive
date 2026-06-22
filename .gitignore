@@ -1,0 +1,6 @@
+AGENTS.md
+/bin/
+/dist/
+*.exe
+*.test
+coverage.out
