@@ -114,11 +114,33 @@ func (r Runner) runOne(parent context.Context, model string, prompt PromptCase) 
 			res.Error = fmt.Sprintf("timeout after %s", r.Config.Timeout())
 		}
 	} else {
-		res.Success = true
+		if outputContainsExpected(res.Output, prompt.Expected) {
+			res.Success = true
+		} else {
+			res.Success = false
+			res.Error = fmt.Sprintf("expected output %q not found", prompt.Expected)
+		}
 	}
 	res.Duration = time.Since(started)
 	res.DurationMS = res.Duration.Milliseconds()
 	return res
+}
+
+func outputContainsExpected(output, expected string) bool {
+	output = strings.TrimSpace(output)
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return true
+	}
+	if output == expected {
+		return true
+	}
+	for _, line := range strings.Split(output, "\n") {
+		if strings.TrimSpace(line) == expected {
+			return true
+		}
+	}
+	return strings.Contains(output, expected)
 }
 
 func trimOutput(s string, max int) string {
