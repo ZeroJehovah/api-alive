@@ -126,6 +126,10 @@ const indexHTML = `<!doctype html>
     }
     th { color: var(--muted); font-weight: 600; background: #fbfcfe; }
     td.model { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+    .model-table th, .model-table td { padding: 4px 6px; height: 30px; }
+    .model-table .model-heading { width: 34%; }
+    .model-table input[type="checkbox"] { width: 16px; height: 16px; min-height: 16px; padding: 0; display: block; }
+    .model-table button.table-action { min-height: 24px; padding: 0 7px; }
     .check { width: 34px; }
     .order { width: 92px; }
     .result { width: 96px; }
@@ -446,7 +450,7 @@ const indexHTML = `<!doctype html>
         return;
       }
       const orderHead = state.editing ? '<th class="order">Order</th>' : '';
-      $('modelHost').innerHTML = '<table><thead><tr><th class="check"></th><th>Model</th>' + orderHead + '<th class="result">Result</th><th class="attempts">Attempts</th><th class="duration">Seconds</th><th class="row-actions"></th></tr></thead><tbody>' + models.map((model, index) => {
+      $('modelHost').innerHTML = '<table class="model-table"><thead><tr><th class="check"></th><th class="model-heading">Model</th>' + orderHead + '<th class="result">Result</th><th class="attempts">Attempts</th><th class="duration">Seconds</th><th class="row-actions"></th></tr></thead><tbody>' + models.map((model, index) => {
         const res = resultFor(model);
         const checked = state.selected.has(model) ? 'checked' : '';
         const seconds = res && !state.runningModels.has(model) ? ((res.duration_ms || 0) / 1000).toFixed(3) : '';
