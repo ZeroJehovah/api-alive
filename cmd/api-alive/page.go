@@ -114,8 +114,13 @@ const indexHTML = `<!doctype html>
       margin-bottom: 12px;
     }
     .toolbar .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .toolbar button {
+      min-height: 30px;
+      padding: 0 10px;
+      font-size: 12px;
+    }
     .add-form { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 8px; margin-bottom: 12px; }
-    .add-form[hidden], button[hidden] { display: none; }
+    .add-form[hidden], button[hidden], label[hidden] { display: none; }
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     th, td {
       padding: 6px 8px;
@@ -130,6 +135,8 @@ const indexHTML = `<!doctype html>
     .model-table .model-heading { width: 34%; }
     .model-table input[type="checkbox"] { width: 16px; height: 16px; min-height: 16px; padding: 0; display: block; }
     .model-table button.table-action { min-height: 24px; padding: 0 7px; }
+    .model-editor .model-heading { width: auto; }
+    .editor-actions { width: 150px; }
     .check { width: 34px; }
     .order { width: 92px; }
     .result { width: 96px; }
@@ -299,20 +306,20 @@ const indexHTML = `<!doctype html>
           <span class="pill" id="selectedCount">0 selected</span>
         </header>
         <div class="body">
-          <form class="add-form" id="addForm" hidden>
-            <input id="newModel" placeholder="gpt-5 or vendor/gpt-5.5">
-            <button type="submit">Add</button>
-          </form>
           <div class="toolbar">
-            <label style="display:flex; align-items:center; gap:8px; color:var(--text);">
+            <label id="selectAllLabel" style="display:flex; align-items:center; gap:8px; color:var(--text);">
               <input id="selectAll" type="checkbox" style="width:16px; min-height:16px;"> Select all
             </label>
             <div class="actions">
               <button class="secondary" id="editModelsBtn" type="button">Edit</button>
+              <button class="secondary" id="cancelEditBtn" type="button" hidden>Cancel</button>
               <button id="runSelectedBtn">Run selected</button>
-              <button class="secondary" id="deleteSelectedBtn" hidden>Delete selected</button>
             </div>
           </div>
+          <form class="add-form" id="addForm" hidden>
+            <input id="newModel" placeholder="gpt-5 or vendor/gpt-5.5">
+            <button type="submit">Add</button>
+          </form>
           <div id="modelHost"></div>
         </div>
       </section>
@@ -378,9 +385,11 @@ const indexHTML = `<!doctype html>
         state.draftModels = [];
       }
       $('runSelectedBtn').disabled = value || state.editing || state.selected.size === 0;
-      $('deleteSelectedBtn').disabled = value || !state.editing || state.selected.size === 0;
-      $('deleteSelectedBtn').hidden = !state.editing;
+      $('runSelectedBtn').hidden = state.editing;
+      $('selectAllLabel').hidden = state.editing;
       $('addForm').hidden = !state.editing;
+      $('cancelEditBtn').hidden = !state.editing;
+      $('cancelEditBtn').disabled = value;
       $('editModelsBtn').disabled = value || !state.config;
       $('editModelsBtn').textContent = state.editing ? 'Save' : 'Edit';
       $('editModelsBtn').className = state.editing ? '' : 'secondary';
@@ -420,11 +429,13 @@ const indexHTML = `<!doctype html>
       }).join('');
     }
     function updateSelectedCount() {
-      $('selectedCount').textContent = state.selected.size + ' selected';
+      $('selectedCount').textContent = state.editing ? 'Editing' : state.selected.size + ' selected';
       $('runSelectedBtn').disabled = state.running || state.editing || state.selected.size === 0;
-      $('deleteSelectedBtn').disabled = state.running || !state.editing || state.selected.size === 0;
-      $('deleteSelectedBtn').hidden = !state.editing;
+      $('runSelectedBtn').hidden = state.editing;
+      $('selectAllLabel').hidden = state.editing;
       $('addForm').hidden = !state.editing;
+      $('cancelEditBtn').hidden = !state.editing;
+      $('cancelEditBtn').disabled = state.running;
       $('editModelsBtn').disabled = state.running || !state.config;
       $('editModelsBtn').textContent = state.editing ? 'Save' : 'Edit';
       $('editModelsBtn').className = state.editing ? '' : 'secondary';
@@ -438,6 +449,25 @@ const indexHTML = `<!doctype html>
       if (!res) return '<span class="pill">Idle</span>';
       return res.success ? '<span class="pill ok">Success</span>' : '<span class="pill bad">Failed</span>';
     }
+    function renderModelEditor(models) {
+      if (!models.length) {
+        $('modelHost').innerHTML = '<div class="empty">No models configured.</div>';
+        return;
+      }
+      $('modelHost').innerHTML = '<table class="model-table model-editor"><thead><tr><th class="model-heading">Model</th><th class="editor-actions">Actions</th></tr></thead><tbody>' + models.map((model, index) => {
+        const upDisabled = index === 0 ? 'disabled data-boundary="true"' : 'data-boundary="false"';
+        const downDisabled = index === models.length - 1 ? 'disabled data-boundary="true"' : 'data-boundary="false"';
+        return '<tr>' +
+          '<td class="model" title="' + escapeText(model) + '">' + escapeText(model) + '</td>' +
+          '<td class="editor-actions"><div class="move-actions">' +
+            '<button type="button" class="secondary table-action" data-move="up" data-model="' + escapeText(model) + '" ' + upDisabled + '>Up</button>' +
+            '<button type="button" class="secondary table-action" data-move="down" data-model="' + escapeText(model) + '" ' + downDisabled + '>Down</button>' +
+            '<button type="button" class="secondary table-action" data-delete-model="' + escapeText(model) + '">Delete</button>' +
+          '</div></td></tr>';
+      }).join('') + '</tbody></table>';
+      document.querySelectorAll('[data-move]').forEach(button => button.addEventListener('click', () => moveModel(button.dataset.model, button.dataset.move)));
+      document.querySelectorAll('[data-delete-model]').forEach(button => button.addEventListener('click', () => deleteModel(button.dataset.deleteModel)));
+    }
     function renderModels() {
       if (state.running && state.editing) {
         state.editing = false;
@@ -445,25 +475,22 @@ const indexHTML = `<!doctype html>
       }
       const models = visibleModels();
       updateSelectedCount();
+      if (state.editing) {
+        renderModelEditor(models);
+        setBusy(state.running);
+        return;
+      }
       if (!models.length) {
         $('modelHost').innerHTML = '<div class="empty">No models configured.</div>';
         return;
       }
-      const orderHead = state.editing ? '<th class="order">Order</th>' : '';
-      $('modelHost').innerHTML = '<table class="model-table"><thead><tr><th class="check"></th><th class="model-heading">Model</th>' + orderHead + '<th class="result">Result</th><th class="attempts">Attempts</th><th class="duration">Seconds</th><th class="row-actions"></th></tr></thead><tbody>' + models.map((model, index) => {
+      $('modelHost').innerHTML = '<table class="model-table"><thead><tr><th class="check"></th><th class="model-heading">Model</th><th class="result">Result</th><th class="attempts">Attempts</th><th class="duration">Seconds</th><th class="row-actions"></th></tr></thead><tbody>' + models.map((model) => {
         const res = resultFor(model);
         const checked = state.selected.has(model) ? 'checked' : '';
         const seconds = res && !state.runningModels.has(model) ? ((res.duration_ms || 0) / 1000).toFixed(3) : '';
         const attempts = res && !state.runningModels.has(model) ? res.attempts : '';
-        const upDisabled = index === 0 ? 'disabled data-boundary="true"' : 'data-boundary="false"';
-        const downDisabled = index === models.length - 1 ? 'disabled data-boundary="true"' : 'data-boundary="false"';
-        const orderCell = state.editing ? '<td class="order"><div class="move-actions">' +
-            '<button type="button" class="secondary table-action" data-move="up" data-model="' + escapeText(model) + '" ' + upDisabled + '>Up</button>' +
-            '<button type="button" class="secondary table-action" data-move="down" data-model="' + escapeText(model) + '" ' + downDisabled + '>Down</button>' +
-          '</div></td>' : '';
         return '<tr><td class="check"><input data-select="' + escapeText(model) + '" type="checkbox" ' + checked + '></td>' +
           '<td class="model" title="' + escapeText(model) + '">' + escapeText(model) + '</td>' +
-          orderCell +
           '<td class="result">' + statusPill(model) + '</td><td class="attempts">' + escapeText(attempts) + '</td><td class="duration">' + escapeText(seconds) + '</td>' +
           '<td class="row-actions"><button type="button" class="secondary table-action" data-run-one="' + escapeText(model) + '">Run</button></td></tr>';
       }).join('') + '</tbody></table>';
@@ -472,7 +499,6 @@ const indexHTML = `<!doctype html>
         updateSelectedCount();
       }));
       document.querySelectorAll('[data-run-one]').forEach(button => button.addEventListener('click', () => startProbe([button.dataset.runOne]).catch(err => setMessage(err.message))));
-      document.querySelectorAll('[data-move]').forEach(button => button.addEventListener('click', () => moveModel(button.dataset.model, button.dataset.move)));
       updateSelectedCount();
       setBusy(state.running);
     }
@@ -534,13 +560,12 @@ const indexHTML = `<!doctype html>
       renderModels();
       setMessage('Added ' + name);
     }
-    async function deleteSelected() {
-      const models = [...state.selected];
-      if (!models.length || state.running || !state.editing) return;
-      state.draftModels = state.draftModels.filter(model => !state.selected.has(model));
-      models.forEach(model => state.selected.delete(model));
+    function deleteModel(model) {
+      if (state.running || !state.editing) return;
+      state.draftModels = state.draftModels.filter(existing => existing !== model);
+      state.selected.delete(model);
       renderModels();
-      setMessage('Removed ' + models.length + ' model(s)');
+      setMessage('Removed ' + model);
     }
     async function moveModel(model, direction) {
       if (state.running || !state.editing) return;
@@ -558,6 +583,7 @@ const indexHTML = `<!doctype html>
       if (!state.editing) {
         state.editing = true;
         state.draftModels = [...(state.config.models || [])];
+        state.selected = new Set();
         renderModels();
         setMessage('Editing models.');
         return;
@@ -570,6 +596,14 @@ const indexHTML = `<!doctype html>
       renderModels();
       setMessage('Models saved.');
       schedulePoll();
+    }
+    function cancelModelEdit() {
+      if (!state.editing) return;
+      state.editing = false;
+      state.draftModels = [];
+      $('newModel').value = '';
+      renderModels();
+      setMessage('Edit cancelled.');
     }
     async function startProbe(models) {
       models = [...new Set(models)].filter(Boolean);
@@ -597,8 +631,8 @@ const indexHTML = `<!doctype html>
       renderModels();
     });
     $('runSelectedBtn').addEventListener('click', () => startProbe([...state.selected]).catch(err => setMessage(err.message)));
-    $('deleteSelectedBtn').addEventListener('click', () => deleteSelected().catch(err => setMessage(err.message)));
     $('editModelsBtn').addEventListener('click', () => toggleModelEdit().catch(err => setMessage(err.message)));
+    $('cancelEditBtn').addEventListener('click', () => cancelModelEdit());
     renderLog();
     renderRunningModels();
     loadState().catch(err => setMessage(err.message));
