@@ -52,6 +52,11 @@ const indexHTML = `<!doctype html>
     }
     button.secondary:hover { background: #f8fafc; }
     button:disabled { opacity: .55; cursor: default; }
+    button.table-action {
+      min-height: 26px;
+      padding: 0 8px;
+      font-size: 12px;
+    }
     input {
       width: 100%;
       min-height: 36px;
@@ -112,19 +117,21 @@ const indexHTML = `<!doctype html>
     .add-form { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 8px; margin-bottom: 12px; }
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     th, td {
-      padding: 10px 8px;
+      padding: 6px 8px;
       border-bottom: 1px solid var(--line);
       text-align: left;
       vertical-align: middle;
-      font-size: 13px;
+      font-size: 12px;
     }
     th { color: var(--muted); font-weight: 600; background: #fbfcfe; }
     td.model { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
     .check { width: 34px; }
-    .result { width: 110px; }
-    .attempts { width: 90px; }
-    .duration { width: 86px; }
-    .row-actions { width: 132px; }
+    .order { width: 92px; }
+    .result { width: 96px; }
+    .attempts { width: 78px; }
+    .duration { width: 78px; }
+    .row-actions { width: 70px; }
+    .move-actions { display: flex; gap: 4px; }
     .pill {
       display: inline-flex;
       align-items: center;
@@ -147,13 +154,13 @@ const indexHTML = `<!doctype html>
       border-radius: 8px;
       background: #fbfcfe;
     }
+    .log-panel { margin-top: 18px; }
     .log {
-      margin-top: 12px;
-      min-height: 92px;
-      max-height: 180px;
+      min-height: 110px;
+      max-height: 240px;
       overflow: auto;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
+      white-space: pre;
+      overflow-wrap: normal;
       background: #111827;
       color: #e5e7eb;
       border-radius: 8px;
@@ -170,7 +177,8 @@ const indexHTML = `<!doctype html>
       .toolbar .actions { width: 100%; }
       .toolbar .actions button { flex: 1; }
       th.attempts, td.attempts, th.duration, td.duration { display: none; }
-      .row-actions { width: 92px; }
+      .order { width: 86px; }
+      .row-actions { width: 68px; }
     }
   </style>
 </head>
@@ -232,9 +240,15 @@ const indexHTML = `<!doctype html>
             </div>
           </div>
           <div id="modelHost"></div>
-          <div class="log" id="log">Ready.</div>
         </div>
       </section>
+    </section>
+
+    <section class="panel log-panel">
+      <header><h2>Log</h2></header>
+      <div class="body">
+        <div class="log" id="log">Ready.</div>
+      </div>
     </section>
   </main>
 
@@ -251,6 +265,9 @@ const indexHTML = `<!doctype html>
       $("runSelectedBtn").disabled = value || state.selected.size === 0;
       $("deleteSelectedBtn").disabled = value || state.selected.size === 0;
       document.querySelectorAll("[data-run-one]").forEach(btn => btn.disabled = value);
+      document.querySelectorAll("[data-move]").forEach(btn => {
+        btn.disabled = value || btn.dataset.boundary === "true";
+      });
     }
     function updateSelectedCount() {
       $("selectedCount").textContent = state.selected.size + " selected";
@@ -275,19 +292,25 @@ const indexHTML = `<!doctype html>
         return;
       }
       $("modelHost").innerHTML = "<table><thead><tr>" +
-        "<th class=\"check\"></th><th>Model</th><th class=\"result\">Result</th><th class=\"attempts\">Attempts</th><th class=\"duration\">Seconds</th><th class=\"row-actions\"></th>" +
-        "</tr></thead><tbody>" + models.map(model => {
+        "<th class=\"check\"></th><th>Model</th><th class=\"order\">Order</th><th class=\"result\">Result</th><th class=\"attempts\">Attempts</th><th class=\"duration\">Seconds</th><th class=\"row-actions\"></th>" +
+        "</tr></thead><tbody>" + models.map((model, index) => {
           const res = resultFor(model);
           const checked = state.selected.has(model) ? "checked" : "";
           const seconds = res && !res.running ? (res.duration_ms / 1000).toFixed(3) : "";
           const attempts = res && !res.running ? res.attempts : "";
+          const upDisabled = index === 0 ? "disabled data-boundary=\"true\"" : "data-boundary=\"false\"";
+          const downDisabled = index === models.length - 1 ? "disabled data-boundary=\"true\"" : "data-boundary=\"false\"";
           return "<tr>" +
             "<td class=\"check\"><input data-select=\"" + escapeText(model) + "\" type=\"checkbox\" " + checked + "></td>" +
             "<td class=\"model\" title=\"" + escapeText(model) + "\">" + escapeText(model) + "</td>" +
+            "<td class=\"order\"><div class=\"move-actions\">" +
+              "<button type=\"button\" class=\"secondary table-action\" data-move=\"up\" data-model=\"" + escapeText(model) + "\" " + upDisabled + ">Up</button>" +
+              "<button type=\"button\" class=\"secondary table-action\" data-move=\"down\" data-model=\"" + escapeText(model) + "\" " + downDisabled + ">Down</button>" +
+            "</div></td>" +
             "<td class=\"result\">" + statusPill(model) + "</td>" +
             "<td class=\"attempts\">" + escapeText(attempts) + "</td>" +
             "<td class=\"duration\">" + escapeText(seconds) + "</td>" +
-            "<td class=\"row-actions\"><button class=\"secondary\" data-run-one=\"" + escapeText(model) + "\">Run</button></td>" +
+            "<td class=\"row-actions\"><button type=\"button\" class=\"secondary table-action\" data-run-one=\"" + escapeText(model) + "\">Run</button></td>" +
           "</tr>";
         }).join("") + "</tbody></table>";
       document.querySelectorAll("[data-select]").forEach(input => {
@@ -298,6 +321,9 @@ const indexHTML = `<!doctype html>
       });
       document.querySelectorAll("[data-run-one]").forEach(button => {
         button.addEventListener("click", () => runModels([button.dataset.runOne]));
+      });
+      document.querySelectorAll("[data-move]").forEach(button => {
+        button.addEventListener("click", () => moveModel(button.dataset.model, button.dataset.move));
       });
       updateSelectedCount();
       setBusy(state.running);
@@ -351,6 +377,17 @@ const indexHTML = `<!doctype html>
       models.forEach(model => { state.selected.delete(model); state.results.delete(model); });
       renderModels();
       setMessage("Deleted " + models.length + " model(s)");
+    }
+    async function moveModel(model, direction) {
+      if (state.running || !state.config) return;
+      const models = [...(state.config.models || [])];
+      const index = models.indexOf(model);
+      const nextIndex = direction === "up" ? index - 1 : index + 1;
+      if (index < 0 || nextIndex < 0 || nextIndex >= models.length) return;
+      [models[index], models[nextIndex]] = [models[nextIndex], models[index]];
+      state.config = await request("/api/config", { method: "POST", body: JSON.stringify({ ...state.config, models }) });
+      renderModels();
+      setMessage("Model order saved.");
     }
     async function runModels(models) {
       models = [...new Set(models)].filter(Boolean);
