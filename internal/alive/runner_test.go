@@ -91,6 +91,39 @@ func TestRunnerReportsConfiguredAttemptsAfterAllFailures(t *testing.T) {
 	}
 }
 
+func TestRunnerUsesProviderErrorLineOnCommandFailure(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Models = []string{"a"}
+	r := Runner{
+		Config: cfg,
+		Provider: staticProvider{
+			name: "test",
+			command: strings.Join([]string{
+				`printf '%s\n' 'Reading additional input from stdin...'`,
+				`printf '%s\n' 'ERROR: first retry failed'`,
+				`printf '%s\n' 'ERROR: exceeded retry limit, last status: 429 Too Many Requests'`,
+				`exit 1`,
+			}, "; "),
+		},
+		Prompts: []PromptCase{{Input: "Say OK.", Expected: "OK"}},
+	}
+
+	ch, err := r.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := <-ch
+	if res.Success {
+		t.Fatalf("result succeeded unexpectedly: %#v", res)
+	}
+	if res.Error != "ERROR: exceeded retry limit, last status: 429 Too Many Requests" {
+		t.Fatalf("error = %q", res.Error)
+	}
+	if res.ExitCode == nil || *res.ExitCode != 1 {
+		t.Fatalf("exit code = %v, want 1", res.ExitCode)
+	}
+}
+
 func TestRunnerChecksExpectedOutput(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Models = []string{"a"}
