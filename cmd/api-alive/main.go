@@ -54,6 +54,8 @@ func runProbeWithExcludes(commandName string, args, excludePrefixes []string, re
 		configPath  string
 		modelsCSV   string
 		provider    string
+		wslCommand  string
+		wslDistro   string
 		timeout     int
 		loops       int
 		jsonOutput  bool
@@ -66,7 +68,9 @@ func runProbeWithExcludes(commandName string, args, excludePrefixes []string, re
 	fs.SetOutput(stderr)
 	fs.StringVar(&configPath, "config", "", "Path to JSON config file (default config.json)")
 	fs.StringVar(&modelsCSV, "models", "", "Comma-separated model names; overrides config.models")
-	fs.StringVar(&provider, "provider", "", "Provider adapter: codex or claude")
+	fs.StringVar(&provider, "provider", "", "Provider adapter: codex, codex-wsl, or claude")
+	fs.StringVar(&wslCommand, "wsl-command", "", "WSL executable for codex-wsl provider")
+	fs.StringVar(&wslDistro, "wsl-distro", "", "WSL distribution for codex-wsl provider")
 	fs.IntVar(&timeout, "timeout", 0, "Per-model timeout in seconds")
 	fs.IntVar(&loops, "loops", 0, "Maximum probe attempts per model")
 	fs.BoolVar(&jsonOutput, "json", false, "Print one JSON object per result")
@@ -111,6 +115,12 @@ func runProbeWithExcludes(commandName string, args, excludePrefixes []string, re
 	}
 	if strings.TrimSpace(provider) != "" {
 		cfg.Provider = strings.TrimSpace(provider)
+	}
+	if strings.TrimSpace(wslCommand) != "" {
+		cfg.WSLCommand = strings.TrimSpace(wslCommand)
+	}
+	if strings.TrimSpace(wslDistro) != "" {
+		cfg.WSLDistro = strings.TrimSpace(wslDistro)
 	}
 	if timeout > 0 {
 		cfg.TimeoutSeconds = timeout
