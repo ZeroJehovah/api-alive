@@ -8,6 +8,7 @@ import (
 )
 
 const maxHumanErrorChars = 120
+const humanStatusWidth = len("success")
 
 func PrintHuman(w io.Writer, res Result) {
 	PrintHumanAligned(w, res, len(res.Model))
@@ -17,11 +18,12 @@ func PrintHumanAligned(w io.Writer, res Result, modelWidth int) {
 	if modelWidth < len(res.Model) {
 		modelWidth = len(res.Model)
 	}
+	status := resultStatus(res)
 	if res.Success {
-		fmt.Fprintf(w, "%s %-*s  %8.3fs  attempts=%d  %s\n", resultEmoji(res), modelWidth, res.Model, durationSeconds(res), res.Attempts, resultStatus(res))
+		fmt.Fprintf(w, "%s %-*s  %8.3fs  attempts=%d  %-*s\n", resultEmoji(res), modelWidth, res.Model, durationSeconds(res), res.Attempts, humanStatusWidth, status)
 		return
 	}
-	fmt.Fprintf(w, "%s %-*s  %8.3fs  attempts=%d  error=%q  %s\n", resultEmoji(res), modelWidth, res.Model, durationSeconds(res), res.Attempts, humanError(res.Error), resultStatus(res))
+	fmt.Fprintf(w, "%s %-*s  %8.3fs  attempts=%d  %-*s  error=%q\n", resultEmoji(res), modelWidth, res.Model, durationSeconds(res), res.Attempts, humanStatusWidth, status, humanError(res.Error))
 }
 
 func ModelColumnWidth(models []string) int {

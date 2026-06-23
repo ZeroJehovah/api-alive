@@ -21,13 +21,16 @@ func TestPrintHumanAlignedPrintsOneSummaryLine(t *testing.T) {
 	}, len("longer-model"))
 
 	got := buf.String()
-	if !strings.HasSuffix(strings.TrimSpace(got), "failed") {
-		t.Fatalf("status is not last in %q", got)
-	}
 	for _, expected := range []string{"❌", "gpt-5", "1.234s", "attempts=3", `error="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..."`} {
 		if !strings.Contains(got, expected) {
 			t.Fatalf("output missing %q: %q", expected, got)
 		}
+	}
+	if !strings.Contains(got, `attempts=3  failed   error=`) {
+		t.Fatalf("failure status is not before error detail: %q", got)
+	}
+	if strings.Index(got, "failed") > strings.Index(got, "error=") {
+		t.Fatalf("failure detail appears before status: %q", got)
 	}
 	if strings.Count(got, "\n") != 1 {
 		t.Fatalf("got %q, want exactly one line", got)
@@ -42,6 +45,38 @@ func TestPrintHumanAlignedPrintsOneSummaryLine(t *testing.T) {
 		if strings.Contains(got, unexpected) {
 			t.Fatalf("output contains %q: %q", unexpected, got)
 		}
+	}
+}
+
+func TestPrintHumanAlignedAlignsStatusesBeforeFailureDetail(t *testing.T) {
+	var success, failure bytes.Buffer
+	width := len("longer-model")
+	PrintHumanAligned(&success, Result{
+		Model:      "short",
+		Success:    true,
+		Attempts:   1,
+		DurationMS: 1000,
+	}, width)
+	PrintHumanAligned(&failure, Result{
+		Model:      "longer-model",
+		Success:    false,
+		Attempts:   1,
+		DurationMS: 1000,
+		Error:      "ERROR: no quota",
+	}, width)
+
+	successLine := success.String()
+	failureLine := failure.String()
+	successIdx := strings.Index(successLine, "success")
+	failedIdx := strings.Index(failureLine, "failed")
+	if successIdx < 0 || failedIdx < 0 {
+		t.Fatalf("missing status in success=%q failure=%q", successLine, failureLine)
+	}
+	if successIdx != failedIdx {
+		t.Fatalf("status columns differ: success=%d failure=%d\nsuccess=%qfailure=%q", successIdx, failedIdx, successLine, failureLine)
+	}
+	if strings.Index(failureLine, "failed") > strings.Index(failureLine, "error=") {
+		t.Fatalf("failure detail appears before status: %q", failureLine)
 	}
 }
 
@@ -83,7 +118,7 @@ func TestPrintHumanAlignedKeepsProviderErrorDetail(t *testing.T) {
 	if !strings.Contains(got, `error="ERROR: exceeded retry limit, last status: 429 Too Many Requests"`) {
 		t.Fatalf("output missing provider error detail: %q", got)
 	}
-	if !strings.HasSuffix(strings.TrimSpace(got), "failed") {
-		t.Fatalf("status is not last in %q", got)
+	if !strings.Contains(got, `failed   error="ERROR: exceeded retry limit, last status: 429 Too Many Requests"`) {
+		t.Fatalf("provider error detail is not after failed status: %q", got)
 	}
 }
