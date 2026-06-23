@@ -16,6 +16,7 @@ type Result struct {
 	Provider     string        `json:"provider"`
 	Model        string        `json:"model"`
 	Success      bool          `json:"success"`
+	Attempts     int           `json:"attempts"`
 	ExitCode     *int          `json:"exit_code,omitempty"`
 	Error        string        `json:"error,omitempty"`
 	Duration     time.Duration `json:"-"`
@@ -35,6 +36,7 @@ type Runner struct {
 }
 
 func (r Runner) Run(ctx context.Context) (<-chan Result, error) {
+	r.Config.ApplyDefaults()
 	if err := r.Config.Validate(); err != nil {
 		return nil, err
 	}
@@ -51,11 +53,11 @@ func (r Runner) Run(ctx context.Context) (<-chan Result, error) {
 
 	for i, model := range r.Config.Models {
 		model := model
-		prompt := r.Prompts[rand.New(rand.NewSource(seed+int64(i))).Intn(len(r.Prompts))]
+		rng := rand.New(rand.NewSource(seed + int64(i)))
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results <- r.runOne(ctx, model, prompt)
+			results <- r.runModel(ctx, model, rng)
 		}()
 	}
 
@@ -66,13 +68,11 @@ func (r Runner) Run(ctx context.Context) (<-chan Result, error) {
 	return results, nil
 }
 
-func (r Runner) runOne(parent context.Context, model string, prompt PromptCase) Result {
+func (r Runner) runModel(parent context.Context, model string, rng *rand.Rand) Result {
 	started := time.Now()
 	res := Result{
 		Provider: r.Provider.Name(),
 		Model:    model,
-		Prompt:   prompt.Input,
-		Expected: prompt.Expected,
 	}
 
 	tmp, err := os.MkdirTemp("", "api-alive-*")
@@ -84,6 +84,26 @@ func (r Runner) runOne(parent context.Context, model string, prompt PromptCase) 
 	}
 	defer os.RemoveAll(tmp)
 	res.TempDir = tmp
+
+	for attempt := 1; attempt <= r.Config.LoopCount; attempt++ {
+		prompt := r.Prompts[rng.Intn(len(r.Prompts))]
+		res = r.runAttempt(parent, model, prompt, tmp, started, attempt)
+		if res.Success {
+			return res
+		}
+	}
+	return res
+}
+
+func (r Runner) runAttempt(parent context.Context, model string, prompt PromptCase, tmp string, started time.Time, attempt int) Result {
+	res := Result{
+		Provider: r.Provider.Name(),
+		Model:    model,
+		Attempts: attempt,
+		Prompt:   prompt.Input,
+		Expected: prompt.Expected,
+		TempDir:  tmp,
+	}
 
 	command := r.Provider.ShellCommand(model, prompt)
 	res.ShellCommand = command

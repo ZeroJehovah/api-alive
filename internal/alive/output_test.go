@@ -11,6 +11,7 @@ func TestPrintHumanAlignedPrintsOneSummaryLine(t *testing.T) {
 	PrintHumanAligned(&buf, Result{
 		Model:      "gpt-5",
 		Success:    false,
+		Attempts:   3,
 		DurationMS: 1234,
 		Error:      "Reconnecting...",
 		Output:     "Reconnecting...\nNO",
@@ -20,7 +21,7 @@ func TestPrintHumanAlignedPrintsOneSummaryLine(t *testing.T) {
 
 	got := buf.String()
 	fields := strings.Fields(got)
-	if len(fields) != 3 || fields[0] != "gpt-5" || fields[1] != "1234ms" || fields[2] != "failed" {
+	if len(fields) != 4 || fields[0] != "gpt-5" || fields[1] != "1234ms" || fields[2] != "failed" || fields[3] != "attempts=3" {
 		t.Fatalf("got fields %#v from %q", fields, got)
 	}
 	if strings.Count(got, "\n") != 1 {

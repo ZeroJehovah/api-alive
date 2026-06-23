@@ -23,6 +23,7 @@ func run() int {
 		modelsCSV   string
 		provider    string
 		timeout     int
+		loops       int
 		jsonOutput  bool
 		dryRun      bool
 		listPrompts bool
@@ -33,6 +34,7 @@ func run() int {
 	flag.StringVar(&modelsCSV, "models", "", "Comma-separated model names; overrides config.models")
 	flag.StringVar(&provider, "provider", "", "Provider adapter: codex or claude")
 	flag.IntVar(&timeout, "timeout", 0, "Per-model timeout in seconds")
+	flag.IntVar(&loops, "loops", 0, "Maximum probe attempts per model")
 	flag.BoolVar(&jsonOutput, "json", false, "Print one JSON object per result")
 	flag.BoolVar(&dryRun, "dry-run", false, "Print commands without executing provider CLI")
 	flag.BoolVar(&listPrompts, "list-prompts", false, "Print built-in prompt cases as JSON and exit")
@@ -66,6 +68,9 @@ func run() int {
 	}
 	if timeout > 0 {
 		cfg.TimeoutSeconds = timeout
+	}
+	if loops > 0 {
+		cfg.LoopCount = loops
 	}
 	cfg.ApplyDefaults()
 

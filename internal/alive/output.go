@@ -14,7 +14,7 @@ func PrintHumanAligned(w io.Writer, res Result, modelWidth int) {
 	if modelWidth < len(res.Model) {
 		modelWidth = len(res.Model)
 	}
-	fmt.Fprintf(w, "%-*s  %8dms  %-7s\n", modelWidth, res.Model, res.DurationMS, resultStatus(res))
+	fmt.Fprintf(w, "%-*s  %8dms  %-7s  attempts=%d\n", modelWidth, res.Model, res.DurationMS, resultStatus(res), res.Attempts)
 }
 
 func ModelColumnWidth(models []string) int {

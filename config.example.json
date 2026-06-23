@@ -2,6 +2,7 @@
   "provider": "codex",
   "models": ["gpt-5"],
   "timeout_seconds": 120,
+  "loop_count": 1,
   "codex_command": "codex",
   "claude_command": "claude",
   "max_output_chars": 4000
