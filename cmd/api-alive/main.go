@@ -34,12 +34,22 @@ func runWithArgs(args []string, stdout, stderr io.Writer) int {
 			return runAdd(args[1:], stdout, stderr)
 		case "remove":
 			return runRemove(args[1:], stdout, stderr)
+		case "exclude":
+			return runExclude(args[1:], stdout, stderr)
 		}
 	}
 	return runProbe(args, stdout, stderr)
 }
 
 func runProbe(args []string, stdout, stderr io.Writer) int {
+	return runProbeWithExcludes("api-alive", args, nil, false, stdout, stderr)
+}
+
+func runExclude(args []string, stdout, stderr io.Writer) int {
+	return runProbeWithExcludes("api-alive exclude", args, nil, true, stdout, stderr)
+}
+
+func runProbeWithExcludes(commandName string, args, excludePrefixes []string, requireExcludePrefixes bool, stdout, stderr io.Writer) int {
 	var (
 		configPath  string
 		modelsCSV   string
@@ -52,7 +62,7 @@ func runProbe(args []string, stdout, stderr io.Writer) int {
 		showVersion bool
 	)
 
-	fs := flag.NewFlagSet("api-alive", flag.ContinueOnError)
+	fs := flag.NewFlagSet(commandName, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&configPath, "config", "", "Path to JSON config file (default config.json)")
 	fs.StringVar(&modelsCSV, "models", "", "Comma-separated model names; overrides config.models")
@@ -66,7 +76,13 @@ func runProbe(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() > 0 {
+	if requireExcludePrefixes {
+		excludePrefixes = append(excludePrefixes, fs.Args()...)
+		if !hasNonEmptyArg(excludePrefixes) {
+			fmt.Fprintln(stderr, "at least one model prefix is required")
+			return 1
+		}
+	} else if fs.NArg() > 0 {
 		fmt.Fprintf(stderr, "unknown command or argument: %s\n", fs.Arg(0))
 		return 1
 	}
@@ -103,6 +119,9 @@ func runProbe(args []string, stdout, stderr io.Writer) int {
 		cfg.LoopCount = loops
 	}
 	cfg.ApplyDefaults()
+	if len(excludePrefixes) > 0 {
+		cfg.Models = alive.ExcludeModelsByPrefix(cfg.Models, excludePrefixes)
+	}
 
 	providerImpl, err := alive.NewProvider(cfg)
 	if err != nil {
@@ -135,6 +154,15 @@ func runProbe(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return 0
+}
+
+func hasNonEmptyArg(args []string) bool {
+	for _, arg := range args {
+		if strings.TrimSpace(arg) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func runList(args []string, stdout, stderr io.Writer) int {

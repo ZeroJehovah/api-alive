@@ -56,6 +56,14 @@ Remove models from the current `config.json`:
 go run ./cmd/api-alive remove gpt-5-mini
 ```
 
+Run probes while excluding models that match one or more prefixes for this execution only:
+
+```sh
+go run ./cmd/api-alive exclude aaa bbb
+```
+
+For example, `exclude aaa` skips configured models such as `aaa/gpt-5.5` without changing `config.json`.
+
 Print one JSON object per completed probe:
 
 ```sh
@@ -91,6 +99,8 @@ go run ./cmd/api-alive --list-prompts
 CLI flags override config values for `--models`, `--provider`, `--timeout`, and `--loops`.
 
 The `list`, `add`, and `remove` commands use `config.json` by default. Pass `--config <path>` after the command to manage a different config file.
+
+The `exclude` command runs probes like the default command, but filters the effective model list by prefix before probing. Probe flags such as `--config`, `--models`, `--provider`, `--timeout`, `--loops`, `--json`, and `--dry-run` are supported before the excluded prefixes.
 
 ## Result Rules
 

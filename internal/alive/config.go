@@ -154,6 +154,21 @@ func RemoveModels(existing, removals []string) []string {
 	return kept
 }
 
+func ExcludeModelsByPrefix(existing, prefixes []string) []string {
+	out := normalizeModels(existing)
+	prefixes = normalizePrefixes(prefixes)
+	if len(prefixes) == 0 {
+		return out
+	}
+	kept := out[:0]
+	for _, model := range out {
+		if !hasAnyPrefix(model, prefixes) {
+			kept = append(kept, model)
+		}
+	}
+	return kept
+}
+
 func normalizeModels(models []string) []string {
 	out := make([]string, 0, len(models))
 	seen := make(map[string]struct{}, len(models))
@@ -169,4 +184,30 @@ func normalizeModels(models []string) []string {
 		seen[model] = struct{}{}
 	}
 	return out
+}
+
+func normalizePrefixes(prefixes []string) []string {
+	out := make([]string, 0, len(prefixes))
+	seen := make(map[string]struct{}, len(prefixes))
+	for _, prefix := range prefixes {
+		prefix = strings.TrimSpace(prefix)
+		if prefix == "" {
+			continue
+		}
+		if _, ok := seen[prefix]; ok {
+			continue
+		}
+		out = append(out, prefix)
+		seen[prefix] = struct{}{}
+	}
+	return out
+}
+
+func hasAnyPrefix(model string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(model, prefix) {
+			return true
+		}
+	}
+	return false
 }
