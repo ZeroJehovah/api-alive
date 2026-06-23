@@ -94,7 +94,8 @@ const indexHTML = `<!doctype html>
       box-shadow: var(--shadow);
     }
     .panel header {
-      padding: 14px 16px;
+      min-height: 52px;
+      padding: 10px 16px;
       border-bottom: 1px solid var(--line);
       display: flex;
       align-items: center;
@@ -103,8 +104,20 @@ const indexHTML = `<!doctype html>
     }
     .panel h2 { margin: 0; font-size: 15px; }
     .panel .body { padding: 16px; }
-    .settings { display: grid; gap: 12px; }
+    .header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+    .header-actions button {
+      min-height: 30px;
+      padding: 0 10px;
+      font-size: 12px;
+    }
+    .settings { display: grid; gap: 10px; }
     .settings .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .settings label { gap: 5px; }
+    .settings input, .settings button {
+      min-height: 30px;
+      padding: 0 10px;
+      font-size: 12px;
+    }
     .toolbar {
       display: flex;
       flex-wrap: wrap;
@@ -295,7 +308,13 @@ const indexHTML = `<!doctype html>
 
     <section class="grid">
       <aside class="panel">
-        <header><h2>Runtime</h2><button class="secondary" id="reloadBtn">Refresh</button></header>
+        <header>
+          <h2>Runtime</h2>
+          <div class="header-actions">
+            <button class="secondary" id="reloadBtn">Refresh</button>
+            <button id="saveConfigBtn">Save runtime</button>
+          </div>
+        </header>
         <div class="body settings">
           <label>Codex command
             <input id="codexCommand" placeholder="codex">
@@ -314,7 +333,6 @@ const indexHTML = `<!doctype html>
           <label>Max output chars
             <input id="maxOutputChars" type="number" min="1" step="1">
           </label>
-          <button id="saveConfigBtn">Save runtime</button>
         </div>
       </aside>
 
