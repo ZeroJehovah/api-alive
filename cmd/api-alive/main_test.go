@@ -36,6 +36,7 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`id="selectAllLabel"`,
 		`.select-all-label`,
 		`.add-form input, .add-form button`,
+		`flex: 1 1 320px`,
 		`editing: false`,
 		`draftModels: []`,
 		`<table class="model-table">`,

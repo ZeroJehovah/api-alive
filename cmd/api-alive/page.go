@@ -120,7 +120,7 @@ const indexHTML = `<!doctype html>
       font-size: 12px;
     }
     .select-all-label { display: flex; align-items: center; gap: 8px; color: var(--text); }
-    .add-form { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 8px; margin-bottom: 12px; }
+    .add-form { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 8px; flex: 1 1 320px; }
     .add-form input, .add-form button {
       min-height: 30px;
       padding: 0 10px;
@@ -316,16 +316,16 @@ const indexHTML = `<!doctype html>
             <label class="select-all-label" id="selectAllLabel">
               <input id="selectAll" type="checkbox" style="width:16px; min-height:16px;"> Select all
             </label>
+            <form class="add-form" id="addForm" hidden>
+              <input id="newModel" placeholder="gpt-5 or vendor/gpt-5.5">
+              <button type="submit">Add</button>
+            </form>
             <div class="actions">
               <button class="secondary" id="editModelsBtn" type="button">Edit</button>
               <button class="secondary" id="cancelEditBtn" type="button" hidden>Cancel</button>
               <button id="runSelectedBtn">Run selected</button>
             </div>
           </div>
-          <form class="add-form" id="addForm" hidden>
-            <input id="newModel" placeholder="gpt-5 or vendor/gpt-5.5">
-            <button type="submit">Add</button>
-          </form>
           <div id="modelHost"></div>
         </div>
       </section>
