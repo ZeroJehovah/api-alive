@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 )
+
+const maxHumanErrorChars = 30
 
 func PrintHuman(w io.Writer, res Result) {
 	PrintHumanAligned(w, res, len(res.Model))
@@ -14,7 +17,11 @@ func PrintHumanAligned(w io.Writer, res Result, modelWidth int) {
 	if modelWidth < len(res.Model) {
 		modelWidth = len(res.Model)
 	}
-	fmt.Fprintf(w, "%-*s  %8dms  %-7s  attempts=%d\n", modelWidth, res.Model, res.DurationMS, resultStatus(res), res.Attempts)
+	if res.Success {
+		fmt.Fprintf(w, "%-*s  %8dms  attempts=%d  %s\n", modelWidth, res.Model, res.DurationMS, res.Attempts, resultStatus(res))
+		return
+	}
+	fmt.Fprintf(w, "%-*s  %8dms  attempts=%d  error=%q  %s\n", modelWidth, res.Model, res.DurationMS, res.Attempts, humanError(res.Error), resultStatus(res))
 }
 
 func ModelColumnWidth(models []string) int {
@@ -32,6 +39,22 @@ func resultStatus(res Result) string {
 		return "success"
 	}
 	return "failed"
+}
+
+func humanError(err string) string {
+	err = strings.Join(strings.Fields(err), " ")
+	return truncateRunes(err, maxHumanErrorChars)
+}
+
+func truncateRunes(s string, max int) string {
+	runes := []rune(s)
+	if max <= 0 || len(runes) <= max {
+		return s
+	}
+	if max <= 3 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-3]) + "..."
 }
 
 func PrintJSONLine(w io.Writer, res Result) error {
