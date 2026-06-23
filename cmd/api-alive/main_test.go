@@ -163,6 +163,31 @@ func TestProbeTaskLifecyclePersistsStateAndRejectsConcurrentStart(t *testing.T) 
 	}
 }
 
+func TestProbeTaskStartKeepsPreviousLogs(t *testing.T) {
+	store := &taskStore{}
+	first, _, err := store.start([]string{"model-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.applyEvent(first.ID, alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}})
+	store.finish(first.ID)
+
+	second, _, err := store.start([]string{"model-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := store.snapshot()
+	if len(snap.Logs) != 1 || snap.Logs[0].Result.Model != "model-a" {
+		t.Fatalf("logs after second start = %#v", snap.Logs)
+	}
+
+	store.applyEvent(second.ID, alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-b", Attempts: 1, Success: false, DurationMS: 20}})
+	snap = store.snapshot()
+	if len(snap.Logs) != 2 || snap.Logs[0].Result.Model != "model-b" || snap.Logs[1].Result.Model != "model-a" {
+		t.Fatalf("logs after second event = %#v", snap.Logs)
+	}
+}
+
 func TestProbeEndpointStartsTaskRejectsConcurrentRequestAndStops(t *testing.T) {
 	dir := t.TempDir()
 	commandPath := filepath.Join(dir, "fake-codex")

@@ -308,6 +308,7 @@ func (ts *taskStore) start(models []string) (probeTask, context.Context, error) 
 	if ts.task.Running {
 		return probeTask{}, nil, errors.New("a probe task is already running")
 	}
+	logs := append([]probeLogEntry(nil), ts.task.Logs...)
 	ts.nextID++
 	ctx, cancel := context.WithCancel(context.Background())
 	now := time.Now().Format(time.RFC3339)
@@ -318,7 +319,7 @@ func (ts *taskStore) start(models []string) (probeTask, context.Context, error) 
 		RunningModels: append([]string(nil), models...),
 		StartedAt:     now,
 		Results:       []alive.Result{},
-		Logs:          []probeLogEntry{},
+		Logs:          logs,
 	}
 	ts.task = task
 	ts.cancel = cancel
