@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -10,102 +13,86 @@ import (
 	"test-api-alive/internal/alive"
 )
 
-func TestRunListPrintsConfiguredModels(t *testing.T) {
+func TestStateCreatesDefaultConfig(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	cfg := alive.DefaultConfig()
-	cfg.Models = []string{"gpt-5", "gpt-5-mini"}
-	if err := alive.SaveConfig(configPath, cfg); err != nil {
+	srv := newServer(configPath)
+
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/state", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	var state appState
+	if err := json.Unmarshal(rec.Body.Bytes(), &state); err != nil {
 		t.Fatal(err)
 	}
-
-	var stdout, stderr bytes.Buffer
-	code := runWithArgs([]string{"list", "--config", configPath}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	if state.Config.CodexCommand != "codex" {
+		t.Fatalf("codex command = %q", state.Config.CodexCommand)
 	}
-	if got, want := stdout.String(), "gpt-5\ngpt-5-mini\n"; got != want {
-		t.Fatalf("stdout = %q, want %q", got, want)
+	if state.Config.ListenAddr != "0.0.0.0:8080" {
+		t.Fatalf("listen addr = %q", state.Config.ListenAddr)
 	}
 }
 
-func TestRunAddAndRemoveUpdateConfigModels(t *testing.T) {
+func TestModelsEndpointAddsAndDeletesModels(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
+	srv := newServer(configPath)
 
-	var stdout, stderr bytes.Buffer
-	code := runWithArgs([]string{"add", "--config", configPath, "gpt-5", "gpt-5-mini", "gpt-5"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("add exit code = %d, stderr = %q", code, stderr.String())
+	postBody := strings.NewReader(`{"models":["gpt-5"," gpt-5-mini ","gpt-5"]}`)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/models", postBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("add status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	assertConfigModels(t, configPath, []string{"gpt-5", "gpt-5-mini"})
+
+	deleteBody := strings.NewReader(`{"models":["gpt-5"]}`)
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/models", deleteBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	assertConfigModels(t, configPath, []string{"gpt-5-mini"})
+}
+
+func TestConfigEndpointUpdatesRuntime(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	srv := newServer(configPath)
+	body := bytes.NewBufferString(`{"models":["gpt-5"],"timeout_seconds":30,"loop_count":2,"codex_command":"codex-beta","listen_addr":"127.0.0.1:0","max_output_chars":1234}`)
+
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/config", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
 	}
 	cfg, err := alive.LoadConfig(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"gpt-5", "gpt-5-mini"}; !reflect.DeepEqual(cfg.Models, want) {
-		t.Fatalf("models after add = %#v, want %#v", cfg.Models, want)
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = runWithArgs([]string{"remove", "--config", configPath, "gpt-5"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("remove exit code = %d, stderr = %q", code, stderr.String())
-	}
-	cfg, err = alive.LoadConfig(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"gpt-5-mini"}; !reflect.DeepEqual(cfg.Models, want) {
-		t.Fatalf("models after remove = %#v, want %#v", cfg.Models, want)
+	if cfg.TimeoutSeconds != 30 || cfg.LoopCount != 2 || cfg.CodexCommand != "codex-beta" || cfg.ListenAddr != "127.0.0.1:0" || cfg.MaxOutputChars != 1234 {
+		t.Fatalf("unexpected config: %#v", cfg)
 	}
 }
 
-func TestRunExcludeFiltersModelsForCurrentProbe(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), "config.json")
-	cfg := alive.DefaultConfig()
-	cfg.Models = []string{"aaa/gpt-5.5", "bbb/gpt-5", "aaa-mini"}
-	if err := alive.SaveConfig(configPath, cfg); err != nil {
-		t.Fatal(err)
-	}
-
+func TestRunRejectsOldCLIArguments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := runWithArgs([]string{"exclude", "--config", configPath, "--dry-run", "aaa"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
-	}
-	if out := stdout.String(); strings.Contains(out, "aaa/gpt-5.5") || strings.Contains(out, "aaa-mini") {
-		t.Fatalf("stdout contains excluded model: %q", out)
-	}
-	if out := stdout.String(); !strings.Contains(out, "bbb/gpt-5") {
-		t.Fatalf("stdout does not contain kept model: %q", out)
-	}
-
-	loaded, err := alive.LoadConfig(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(loaded.Models, cfg.Models) {
-		t.Fatalf("exclude changed config models = %#v, want %#v", loaded.Models, cfg.Models)
-	}
-}
-
-func TestRunExcludeFailsWhenAllModelsAreFiltered(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	code := runWithArgs([]string{"exclude", "--models", "aaa/gpt-5.5,aaa-mini", "--dry-run", "aaa"}, &stdout, &stderr)
+	code := run([]string{"list"}, &stdout, &stderr)
 	if code != 1 {
-		t.Fatalf("exit code = %d, want 1; stdout = %q stderr = %q", code, stdout.String(), stderr.String())
+		t.Fatalf("exit code = %d, want 1", code)
 	}
-	if !strings.Contains(stderr.String(), "at least one model is required") {
+	if !strings.Contains(stderr.String(), "unexpected argument") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 
-func TestRunExcludeRequiresPrefix(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	code := runWithArgs([]string{"exclude"}, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("exit code = %d, want 1; stdout = %q stderr = %q", code, stdout.String(), stderr.String())
+func assertConfigModels(t *testing.T, path string, want []string) {
+	t.Helper()
+	cfg, err := alive.LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(stderr.String(), "at least one model prefix is required") {
-		t.Fatalf("stderr = %q", stderr.String())
+	if !reflect.DeepEqual(cfg.Models, want) {
+		t.Fatalf("models = %#v, want %#v", cfg.Models, want)
 	}
 }
