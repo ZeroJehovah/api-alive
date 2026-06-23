@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const maxHumanErrorChars = 30
+const maxHumanErrorChars = 120
 
 func PrintHuman(w io.Writer, res Result) {
 	PrintHumanAligned(w, res, len(res.Model))

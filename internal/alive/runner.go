@@ -121,10 +121,11 @@ func (r Runner) runAttempt(parent context.Context, model string, prompt PromptCa
 	cmd := shellForContext(ctx, command)
 	cmd.Dir = tmp
 	outputBytes, err := cmd.CombinedOutput()
-	res.Output = trimOutput(string(outputBytes), r.Config.MaxOutputChars)
+	output := string(outputBytes)
+	res.Output = trimOutput(output, r.Config.MaxOutputChars)
 	if err != nil {
 		res.Success = false
-		res.Error = err.Error()
+		res.Error = commandFailureMessage(err, output)
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			code := exitErr.ExitCode()
@@ -144,6 +145,37 @@ func (r Runner) runAttempt(parent context.Context, model string, prompt PromptCa
 	res.Duration = time.Since(started)
 	res.DurationMS = res.Duration.Milliseconds()
 	return res
+}
+
+func commandFailureMessage(err error, output string) string {
+	if msg := lastErrorLine(output); msg != "" {
+		return msg
+	}
+	if msg := lastOutputLine(output); msg != "" {
+		return msg
+	}
+	return err.Error()
+}
+
+func lastErrorLine(output string) string {
+	var last string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToUpper(line), "ERROR:") {
+			last = line
+		}
+	}
+	return last
+}
+
+func lastOutputLine(output string) string {
+	lines := strings.Split(output, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 func outputContainsExpected(output, expected string) bool {

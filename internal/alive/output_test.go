@@ -8,12 +8,13 @@ import (
 
 func TestPrintHumanAlignedPrintsOneSummaryLine(t *testing.T) {
 	var buf bytes.Buffer
+	longError := strings.Repeat("x", maxHumanErrorChars+10)
 	PrintHumanAligned(&buf, Result{
 		Model:      "gpt-5",
 		Success:    false,
 		Attempts:   3,
 		DurationMS: 1234,
-		Error:      "abcdefghijklmnopqrstuvwxyz1234567890",
+		Error:      longError,
 		Output:     "Reconnecting...\nNO",
 		Prompt:     "Say OK.",
 		Expected:   "OK",
@@ -23,7 +24,7 @@ func TestPrintHumanAlignedPrintsOneSummaryLine(t *testing.T) {
 	if !strings.HasSuffix(strings.TrimSpace(got), "failed") {
 		t.Fatalf("status is not last in %q", got)
 	}
-	for _, expected := range []string{"gpt-5", "1234ms", "attempts=3", `error="abcdefghijklmnopqrstuvwxyz1..."`} {
+	for _, expected := range []string{"gpt-5", "1234ms", "attempts=3", `error="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..."`} {
 		if !strings.Contains(got, expected) {
 			t.Fatalf("output missing %q: %q", expected, got)
 		}
@@ -56,5 +57,24 @@ func TestPrintHumanAlignedPrintsSuccessStatusLastWithoutError(t *testing.T) {
 	}
 	if strings.Contains(got, "error=") {
 		t.Fatalf("success output contains error field: %q", got)
+	}
+}
+
+func TestPrintHumanAlignedKeepsProviderErrorDetail(t *testing.T) {
+	var buf bytes.Buffer
+	PrintHumanAligned(&buf, Result{
+		Model:      "hotaruapi/gpt-5.5",
+		Success:    false,
+		Attempts:   1,
+		DurationMS: 21735,
+		Error:      "ERROR: exceeded retry limit, last status: 429 Too Many Requests",
+	}, len("hotaruapi/gpt-5.5"))
+
+	got := buf.String()
+	if !strings.Contains(got, `error="ERROR: exceeded retry limit, last status: 429 Too Many Requests"`) {
+		t.Fatalf("output missing provider error detail: %q", got)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(got), "failed") {
+		t.Fatalf("status is not last in %q", got)
 	}
 }
