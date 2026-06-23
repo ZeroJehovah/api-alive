@@ -24,7 +24,7 @@ func TestPrintHumanAlignedPrintsOneSummaryLine(t *testing.T) {
 	if !strings.HasSuffix(strings.TrimSpace(got), "failed") {
 		t.Fatalf("status is not last in %q", got)
 	}
-	for _, expected := range []string{"gpt-5", "1234ms", "attempts=3", `error="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..."`} {
+	for _, expected := range []string{"❌", "gpt-5", "1.234s", "attempts=3", `error="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..."`} {
 		if !strings.Contains(got, expected) {
 			t.Fatalf("output missing %q: %q", expected, got)
 		}
@@ -32,8 +32,11 @@ func TestPrintHumanAlignedPrintsOneSummaryLine(t *testing.T) {
 	if strings.Count(got, "\n") != 1 {
 		t.Fatalf("got %q, want exactly one line", got)
 	}
-	if idx := strings.Index(got, "1234ms"); idx != len("longer-model")+2+4 {
-		t.Fatalf("duration starts at index %d in %q", idx, got)
+	if !strings.HasPrefix(got, "❌ gpt-5") {
+		t.Fatalf("output does not start with failure emoji and model: %q", got)
+	}
+	if strings.Contains(got, "ms") {
+		t.Fatalf("output still contains millisecond unit: %q", got)
 	}
 	for _, unexpected := range []string{"Reconnecting", "prompt=", "expected=", "output:"} {
 		if strings.Contains(got, unexpected) {
@@ -57,6 +60,12 @@ func TestPrintHumanAlignedPrintsSuccessStatusLastWithoutError(t *testing.T) {
 	}
 	if strings.Contains(got, "error=") {
 		t.Fatalf("success output contains error field: %q", got)
+	}
+	if !strings.Contains(got, "✅") {
+		t.Fatalf("success output missing emoji: %q", got)
+	}
+	if !strings.Contains(got, "0.099s") {
+		t.Fatalf("success output missing second duration: %q", got)
 	}
 }
 

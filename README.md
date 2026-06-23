@@ -97,8 +97,8 @@ The `list`, `add`, and `remove` commands use `config.json` by default. Pass `--c
 Each model runs in its own temporary directory through a shell command. Human-readable results are printed as each probe finishes, with one aligned summary line per model:
 
 ```text
-gpt-5              1234ms  attempts=1  success
-gpt-5-mini          982ms  attempts=3  error="ERROR: exceeded retry limit, last status: 429 Too Many Requests"  failed
+✅ gpt-5             1.234s  attempts=1  success
+❌ gpt-5-mini       0.982s  attempts=3  error="ERROR: exceeded retry limit, last status: 429 Too Many Requests"  failed
 ```
 
 A probe succeeds only when the provider CLI exits successfully and the captured output contains the expected short answer for the selected prompt. When `loop_count` or `--loops` is greater than 1, each model is retried until the first success or until all attempts fail. CLI failures, timeouts, and expected-output mismatches are reported as failures. Human-readable CLI failure lines prefer the last captured `ERROR:` line from the provider output, falling back to the last output line and then the process error. Human-readable failure lines include an error field truncated to 120 characters, and the final status is always the last field on the line.

@@ -18,10 +18,10 @@ func PrintHumanAligned(w io.Writer, res Result, modelWidth int) {
 		modelWidth = len(res.Model)
 	}
 	if res.Success {
-		fmt.Fprintf(w, "%-*s  %8dms  attempts=%d  %s\n", modelWidth, res.Model, res.DurationMS, res.Attempts, resultStatus(res))
+		fmt.Fprintf(w, "%s %-*s  %8.3fs  attempts=%d  %s\n", resultEmoji(res), modelWidth, res.Model, durationSeconds(res), res.Attempts, resultStatus(res))
 		return
 	}
-	fmt.Fprintf(w, "%-*s  %8dms  attempts=%d  error=%q  %s\n", modelWidth, res.Model, res.DurationMS, res.Attempts, humanError(res.Error), resultStatus(res))
+	fmt.Fprintf(w, "%s %-*s  %8.3fs  attempts=%d  error=%q  %s\n", resultEmoji(res), modelWidth, res.Model, durationSeconds(res), res.Attempts, humanError(res.Error), resultStatus(res))
 }
 
 func ModelColumnWidth(models []string) int {
@@ -39,6 +39,17 @@ func resultStatus(res Result) string {
 		return "success"
 	}
 	return "failed"
+}
+
+func resultEmoji(res Result) string {
+	if res.Success {
+		return "✅"
+	}
+	return "❌"
+}
+
+func durationSeconds(res Result) float64 {
+	return float64(res.DurationMS) / 1000
 }
 
 func humanError(err string) string {
