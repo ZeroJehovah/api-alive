@@ -7,24 +7,31 @@ import (
 )
 
 func PrintHuman(w io.Writer, res Result) {
-	status := "success"
-	if !res.Success {
-		status = "failed"
+	PrintHumanAligned(w, res, len(res.Model))
+}
+
+func PrintHumanAligned(w io.Writer, res Result, modelWidth int) {
+	if modelWidth < len(res.Model) {
+		modelWidth = len(res.Model)
 	}
-	fmt.Fprintf(w, "model=%s provider=%s result=%s duration=%dms\n", res.Model, res.Provider, status, res.DurationMS)
-	if !res.Success {
-		if res.ExitCode != nil {
-			fmt.Fprintf(w, "exit_code=%d\n", *res.ExitCode)
+	fmt.Fprintf(w, "%-*s  %8dms  %-7s\n", modelWidth, res.Model, res.DurationMS, resultStatus(res))
+}
+
+func ModelColumnWidth(models []string) int {
+	width := 0
+	for _, model := range models {
+		if len(model) > width {
+			width = len(model)
 		}
-		if res.Error != "" {
-			fmt.Fprintf(w, "error=%s\n", res.Error)
-		}
 	}
-	fmt.Fprintf(w, "prompt=%q expected=%q\n", res.Prompt, res.Expected)
-	if res.Output != "" {
-		fmt.Fprintf(w, "output:\n%s\n", res.Output)
+	return width
+}
+
+func resultStatus(res Result) string {
+	if res.Success {
+		return "success"
 	}
-	fmt.Fprintln(w, "---")
+	return "failed"
 }
 
 func PrintJSONLine(w io.Writer, res Result) error {
