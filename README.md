@@ -59,7 +59,12 @@ CLI flags override config values for `--models`, `--provider`, and `--timeout`.
 
 ## Result Rules
 
-Each model runs in its own temporary directory through a shell command. Results are printed as each probe finishes.
+Each model runs in its own temporary directory through a shell command. Human-readable results are printed as each probe finishes, with one aligned summary line per model:
+
+```text
+gpt-5              1234ms  success
+gpt-5-mini          982ms  failed
+```
 
 A probe succeeds only when the provider CLI exits successfully and the captured output contains the expected short answer for the selected prompt. CLI failures, timeouts, and expected-output mismatches are reported as failures.
 

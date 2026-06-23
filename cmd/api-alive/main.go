@@ -82,6 +82,7 @@ func run() int {
 	}
 
 	failed := false
+	modelWidth := alive.ModelColumnWidth(cfg.Models)
 	for res := range results {
 		if jsonOutput {
 			if err := alive.PrintJSONLine(os.Stdout, res); err != nil {
@@ -89,7 +90,7 @@ func run() int {
 				return 1
 			}
 		} else {
-			alive.PrintHuman(os.Stdout, res)
+			alive.PrintHumanAligned(os.Stdout, res, modelWidth)
 		}
 		if !res.Success {
 			failed = true
