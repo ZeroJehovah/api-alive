@@ -18,6 +18,12 @@ Run probes for comma-separated model names:
 go run ./cmd/api-alive --models gpt-5,gpt-5-mini
 ```
 
+Retry each model up to three times, stopping at the first success:
+
+```sh
+go run ./cmd/api-alive --models gpt-5,gpt-5-mini --loops 3
+```
+
 Use a JSON config file:
 
 ```sh
@@ -49,24 +55,25 @@ go run ./cmd/api-alive --list-prompts
   "provider": "codex",
   "models": ["gpt-5"],
   "timeout_seconds": 120,
+  "loop_count": 1,
   "codex_command": "codex",
   "claude_command": "claude",
   "max_output_chars": 4000
 }
 ```
 
-CLI flags override config values for `--models`, `--provider`, and `--timeout`.
+CLI flags override config values for `--models`, `--provider`, `--timeout`, and `--loops`.
 
 ## Result Rules
 
 Each model runs in its own temporary directory through a shell command. Human-readable results are printed as each probe finishes, with one aligned summary line per model:
 
 ```text
-gpt-5              1234ms  success
-gpt-5-mini          982ms  failed
+gpt-5              1234ms  success  attempts=1
+gpt-5-mini          982ms  failed   attempts=3
 ```
 
-A probe succeeds only when the provider CLI exits successfully and the captured output contains the expected short answer for the selected prompt. CLI failures, timeouts, and expected-output mismatches are reported as failures.
+A probe succeeds only when the provider CLI exits successfully and the captured output contains the expected short answer for the selected prompt. When `loop_count` or `--loops` is greater than 1, each model is retried until the first success or until all attempts fail. CLI failures, timeouts, and expected-output mismatches are reported as failures.
 
 Process exit codes:
 

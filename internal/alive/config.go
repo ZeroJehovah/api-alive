@@ -13,6 +13,7 @@ type Config struct {
 	Provider       string   `json:"provider"`
 	Models         []string `json:"models"`
 	TimeoutSeconds int      `json:"timeout_seconds"`
+	LoopCount      int      `json:"loop_count"`
 	CodexCommand   string   `json:"codex_command"`
 	ClaudeCommand  string   `json:"claude_command"`
 	MaxOutputChars int      `json:"max_output_chars"`
@@ -22,6 +23,7 @@ func DefaultConfig() Config {
 	return Config{
 		Provider:       "codex",
 		TimeoutSeconds: 120,
+		LoopCount:      1,
 		CodexCommand:   "codex",
 		ClaudeCommand:  "claude",
 		MaxOutputChars: 4000,
@@ -50,6 +52,9 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.TimeoutSeconds <= 0 {
 		c.TimeoutSeconds = 120
+	}
+	if c.LoopCount <= 0 {
+		c.LoopCount = 1
 	}
 	if c.CodexCommand == "" {
 		c.CodexCommand = "codex"
