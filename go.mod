@@ -1,3 +1,3 @@
-module test-api-alive
+module api-alive
 
 go 1.22
