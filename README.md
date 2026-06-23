@@ -20,7 +20,7 @@ GOOS=linux GOARCH=arm64 go build -o dist/api-alive-linux-arm64 ./cmd/api-alive
 
 ## 运行
 
-创建或编辑 `config.json` 后启动服务：
+启动服务：
 
 ```sh
 ./bin/api-alive --config config.json
@@ -43,6 +43,8 @@ http://<vps-ip>:8080
 - 展示成功、失败、耗时、尝试次数和错误输出。
 
 ## 配置
+
+首次启动时，服务会在指定路径自动创建配置文件。后续配置通过 Web 页面修改，不需要手动编辑 `config.json`。
 
 示例：
 
