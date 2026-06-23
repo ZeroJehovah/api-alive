@@ -304,6 +304,7 @@ const indexHTML = `<!doctype html>
               <input id="selectAll" type="checkbox" style="width:16px; min-height:16px;"> Select all
             </label>
             <div class="actions">
+              <button class="secondary" id="orderModeBtn" type="button">Adjust order</button>
               <button id="runSelectedBtn">Run selected</button>
               <button class="secondary" id="deleteSelectedBtn">Delete selected</button>
             </div>
@@ -328,7 +329,7 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [] };
+    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], ordering: false };
     const maxLogEntries = 100;
     const idlePollMS = 60000;
     const runningPollMS = 5000;
@@ -354,8 +355,11 @@ const indexHTML = `<!doctype html>
     }
     function setBusy(value) {
       state.running = value;
+      if (value && state.ordering) state.ordering = false;
       $('runSelectedBtn').disabled = value || state.selected.size === 0;
       $('deleteSelectedBtn').disabled = value || state.selected.size === 0;
+      $('orderModeBtn').disabled = value || (state.config?.models || []).length < 2;
+      $('orderModeBtn').textContent = state.ordering ? 'Done ordering' : 'Adjust order';
       $('stopProbeBtn').disabled = !value || state.task?.stopping;
       $('stopProbeBtn').textContent = state.task?.stopping ? 'Stopping...' : 'Stop task';
       document.querySelectorAll('[data-run-one]').forEach(btn => btn.disabled = value);
@@ -392,6 +396,8 @@ const indexHTML = `<!doctype html>
       $('runSelectedBtn').disabled = state.running || state.selected.size === 0;
       $('deleteSelectedBtn').disabled = state.running || state.selected.size === 0;
       const models = state.config?.models || [];
+      $('orderModeBtn').disabled = state.running || models.length < 2;
+      $('orderModeBtn').textContent = state.ordering ? 'Done ordering' : 'Adjust order';
       $('selectAll').checked = models.length > 0 && state.selected.size === models.length;
       $('selectAll').indeterminate = state.selected.size > 0 && state.selected.size < models.length;
     }
@@ -403,24 +409,27 @@ const indexHTML = `<!doctype html>
     }
     function renderModels() {
       const models = state.config?.models || [];
+      if (state.running || models.length < 2) state.ordering = false;
       updateSelectedCount();
       if (!models.length) {
         $('modelHost').innerHTML = '<div class="empty">No models configured.</div>';
         return;
       }
-      $('modelHost').innerHTML = '<table><thead><tr><th class="check"></th><th>Model</th><th class="order">Order</th><th class="result">Result</th><th class="attempts">Attempts</th><th class="duration">Seconds</th><th class="row-actions"></th></tr></thead><tbody>' + models.map((model, index) => {
+      const orderHead = state.ordering ? '<th class="order">Order</th>' : '';
+      $('modelHost').innerHTML = '<table><thead><tr><th class="check"></th><th>Model</th>' + orderHead + '<th class="result">Result</th><th class="attempts">Attempts</th><th class="duration">Seconds</th><th class="row-actions"></th></tr></thead><tbody>' + models.map((model, index) => {
         const res = resultFor(model);
         const checked = state.selected.has(model) ? 'checked' : '';
         const seconds = res && !state.runningModels.has(model) ? ((res.duration_ms || 0) / 1000).toFixed(3) : '';
         const attempts = res && !state.runningModels.has(model) ? res.attempts : '';
         const upDisabled = index === 0 ? 'disabled data-boundary="true"' : 'data-boundary="false"';
         const downDisabled = index === models.length - 1 ? 'disabled data-boundary="true"' : 'data-boundary="false"';
-        return '<tr><td class="check"><input data-select="' + escapeText(model) + '" type="checkbox" ' + checked + '></td>' +
-          '<td class="model" title="' + escapeText(model) + '">' + escapeText(model) + '</td>' +
-          '<td class="order"><div class="move-actions">' +
+        const orderCell = state.ordering ? '<td class="order"><div class="move-actions">' +
             '<button type="button" class="secondary table-action" data-move="up" data-model="' + escapeText(model) + '" ' + upDisabled + '>Up</button>' +
             '<button type="button" class="secondary table-action" data-move="down" data-model="' + escapeText(model) + '" ' + downDisabled + '>Down</button>' +
-          '</div></td>' +
+          '</div></td>' : '';
+        return '<tr><td class="check"><input data-select="' + escapeText(model) + '" type="checkbox" ' + checked + '></td>' +
+          '<td class="model" title="' + escapeText(model) + '">' + escapeText(model) + '</td>' +
+          orderCell +
           '<td class="result">' + statusPill(model) + '</td><td class="attempts">' + escapeText(attempts) + '</td><td class="duration">' + escapeText(seconds) + '</td>' +
           '<td class="row-actions"><button type="button" class="secondary table-action" data-run-one="' + escapeText(model) + '">Run</button></td></tr>';
       }).join('') + '</tbody></table>';
@@ -497,6 +506,7 @@ const indexHTML = `<!doctype html>
       if (!models.length || state.running) return;
       state.config = await request('/api/models', { method: 'DELETE', body: JSON.stringify({ models }) });
       models.forEach(model => state.selected.delete(model));
+      if ((state.config.models || []).length < 2) state.ordering = false;
       renderModels();
       setMessage('Deleted ' + models.length + ' model(s)');
       schedulePoll();
@@ -540,6 +550,11 @@ const indexHTML = `<!doctype html>
     });
     $('runSelectedBtn').addEventListener('click', () => startProbe([...state.selected]).catch(err => setMessage(err.message)));
     $('deleteSelectedBtn').addEventListener('click', () => deleteSelected().catch(err => setMessage(err.message)));
+    $('orderModeBtn').addEventListener('click', () => {
+      if (state.running || (state.config?.models || []).length < 2) return;
+      state.ordering = !state.ordering;
+      renderModels();
+    });
     renderLog();
     renderRunningModels();
     loadState().catch(err => setMessage(err.message));
