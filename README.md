@@ -1,167 +1,77 @@
 # test-api-alive
 
-`test-api-alive` runs short liveness probes against one or more CLI-backed model names in parallel.
+`test-api-alive` is a VPS-hosted Web dashboard for probing Codex model availability. It runs on Ubuntu, calls the local `codex` command, and probes one or more configured model names in parallel.
 
-The default provider is Codex CLI. A Claude Code adapter is present so provider-specific command flags can evolve without changing the runner.
+The current target deployment is an ARM Ubuntu 24 VPS with Codex already installed.
 
 ## Build
+
+Build on the VPS:
 
 ```sh
 go build -o bin/api-alive ./cmd/api-alive
 ```
 
-Build the Windows GUI executable from WSL/Linux:
+Cross-build a Linux ARM64 binary from another machine:
 
 ```sh
-GOOS=windows GOARCH=amd64 go build -o dist/api-alive-gui.exe ./cmd/api-alive-gui
+GOOS=linux GOARCH=arm64 go build -o dist/api-alive-linux-arm64 ./cmd/api-alive
 ```
 
-## Usage
+## Run
 
-By default, `api-alive` reads `config.json` from the current directory.
-
-Run probes for models from `config.json`:
+Create or edit `config.json`, then start the server:
 
 ```sh
-go run ./cmd/api-alive
+./bin/api-alive --config config.json
 ```
 
-Run probes for comma-separated model names, overriding `config.json`:
+Open the dashboard:
 
-```sh
-go run ./cmd/api-alive --models gpt-5,gpt-5-mini
+```text
+http://<vps-ip>:8080
 ```
 
-Retry each model up to three times, stopping at the first success:
+By default the server listens on `0.0.0.0:8080`. Put it behind a firewall, reverse proxy, or access control before exposing it to the public Internet.
 
-```sh
-go run ./cmd/api-alive --models gpt-5,gpt-5-mini --loops 3
-```
+## Dashboard
 
-Use a JSON config file:
+The Web UI supports:
 
-```sh
-go run ./cmd/api-alive --config config.example.json
-```
-
-Run probes through Codex installed inside a configured WSL distribution:
-
-```sh
-go run ./cmd/api-alive --provider codex-wsl --wsl-distro Ubuntu --models gpt-5
-```
-
-List models from the current `config.json`:
-
-```sh
-go run ./cmd/api-alive list
-```
-
-Add models to the current `config.json`:
-
-```sh
-go run ./cmd/api-alive add gpt-5 gpt-5-mini
-```
-
-Remove models from the current `config.json`:
-
-```sh
-go run ./cmd/api-alive remove gpt-5-mini
-```
-
-Run probes while excluding models that match one or more prefixes for this execution only:
-
-```sh
-go run ./cmd/api-alive exclude aaa bbb
-```
-
-For example, `exclude aaa` skips configured models such as `aaa/gpt-5.5` without changing `config.json`.
-
-Print one JSON object per completed probe:
-
-```sh
-go run ./cmd/api-alive --models gpt-5 --json
-```
-
-Preview provider commands without calling the model CLI:
-
-```sh
-go run ./cmd/api-alive --models gpt-5,gpt-5-mini --dry-run
-```
-
-List the 100 built-in prompt cases:
-
-```sh
-go run ./cmd/api-alive --list-prompts
-```
-
-## Windows GUI
-
-`api-alive-gui.exe` is a standalone Windows program built with Go. It starts a local dashboard in the default browser and uses `wsl.exe` to run Codex inside the selected WSL distribution.
-
-The dashboard supports:
-
-- selecting or typing the WSL distribution;
-- listing configured models from `config.json`;
-- adding and deleting models;
-- running one model from its row;
-- selecting multiple models or all models and running them together;
-- showing success, failure, duration, attempts, and error output.
-
-The GUI stores settings in the `config.json` next to the executable by default. Pass a config path as the first argument to use a different file:
-
-```sh
-api-alive-gui.exe C:\path\to\config.json
-```
+- viewing and editing runtime settings;
+- adding and deleting configured model names;
+- selecting one or more models;
+- running a probe for one model or all selected models;
+- showing success, failure, duration, attempts, and captured error output.
 
 ## Config
 
 ```json
 {
-  "provider": "codex-wsl",
   "models": ["gpt-5"],
   "timeout_seconds": 120,
   "loop_count": 1,
   "codex_command": "codex",
-  "claude_command": "claude",
-  "wsl_command": "wsl.exe",
-  "wsl_distro": "Ubuntu",
+  "listen_addr": "0.0.0.0:8080",
   "max_output_chars": 4000
 }
 ```
 
-CLI flags override config values for `--models`, `--provider`, `--wsl-command`, `--wsl-distro`, `--timeout`, and `--loops`.
+Fields:
 
-The `list`, `add`, and `remove` commands use `config.json` by default. Pass `--config <path>` after the command to manage a different config file.
+- `models`: model names shown in the dashboard and used for selected probes.
+- `timeout_seconds`: per-attempt timeout for each model.
+- `loop_count`: maximum attempts per model; a model stops after the first successful attempt.
+- `codex_command`: command used to invoke Codex on the VPS.
+- `listen_addr`: HTTP listen address for the Web service.
+- `max_output_chars`: maximum captured output returned per probe result.
 
-The `exclude` command runs probes like the default command, but filters the effective model list by prefix before probing. Probe flags such as `--config`, `--models`, `--provider`, `--timeout`, `--loops`, `--json`, and `--dry-run` are supported before the excluded prefixes.
+## Probe Behavior
 
-## Result Rules
-
-Each model runs in its own temporary directory through a shell command. Human-readable results are printed as each probe finishes, with one aligned summary line per model:
-
-```text
-✅ gpt-5             1.234s  attempts=1  success
-❌ gpt-5-mini       0.982s  attempts=3  failed   error=ERROR: exceeded retry limit, last status: 429 Too Many Requests
-```
-
-A probe succeeds only when the provider CLI exits successfully and the captured output contains the expected short answer for the selected prompt. When `loop_count` or `--loops` is greater than 1, each model is retried until the first success or until all attempts fail. CLI failures, timeouts, and expected-output mismatches are reported as failures. Human-readable CLI failure lines prefer the last captured `ERROR:` line from the provider output, falling back to the last output line and then the process error. Human-readable failure lines include an unquoted error field truncated to 120 characters. The status field is aligned across success and failed rows; failed rows append the error detail after `failed`.
-
-Process exit codes:
-
-- `0`: all probes succeeded
-- `1`: setup, config, or output formatting error
-- `2`: at least one probe failed
-
-## Providers
-
-Codex command shape:
+Each selected model runs in its own temporary directory. The command shape is:
 
 ```sh
 codex exec --model <model> --skip-git-repo-check --ephemeral <prompt>
 ```
 
-Claude command shape:
-
-```sh
-claude --model <model> --print <prompt>
-```
+A probe succeeds only when Codex exits successfully and the captured output contains the expected short answer for the selected built-in prompt. Failures include command errors, timeouts, and expected-output mismatches. Command failure messages prefer the last captured `ERROR:` line, then the last output line, then the process error.

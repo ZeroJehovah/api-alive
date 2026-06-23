@@ -13,35 +13,28 @@ import (
 )
 
 type Result struct {
-	Provider     string        `json:"provider"`
-	Model        string        `json:"model"`
-	Success      bool          `json:"success"`
-	Attempts     int           `json:"attempts"`
-	ExitCode     *int          `json:"exit_code,omitempty"`
-	Error        string        `json:"error,omitempty"`
-	Duration     time.Duration `json:"-"`
-	DurationMS   int64         `json:"duration_ms"`
-	Prompt       string        `json:"prompt"`
-	Expected     string        `json:"expected"`
-	Output       string        `json:"output,omitempty"`
-	TempDir      string        `json:"temp_dir,omitempty"`
-	ShellCommand string        `json:"shell_command,omitempty"`
+	Model      string        `json:"model"`
+	Success    bool          `json:"success"`
+	Attempts   int           `json:"attempts"`
+	ExitCode   *int          `json:"exit_code,omitempty"`
+	Error      string        `json:"error,omitempty"`
+	Duration   time.Duration `json:"-"`
+	DurationMS int64         `json:"duration_ms"`
+	Prompt     string        `json:"prompt"`
+	Expected   string        `json:"expected"`
+	Output     string        `json:"output,omitempty"`
 }
 
 type Runner struct {
-	Config   Config
-	Provider Provider
-	Prompts  []PromptCase
-	DryRun   bool
+	Config         Config
+	Prompts        []PromptCase
+	commandBuilder func(model string, prompt PromptCase) string
 }
 
 func (r Runner) Run(ctx context.Context) (<-chan Result, error) {
 	r.Config.ApplyDefaults()
 	if err := r.Config.Validate(); err != nil {
 		return nil, err
-	}
-	if r.Provider == nil {
-		return nil, errors.New("provider is nil")
 	}
 	if len(r.Prompts) == 0 {
 		return nil, errors.New("prompts are empty")
@@ -71,8 +64,7 @@ func (r Runner) Run(ctx context.Context) (<-chan Result, error) {
 func (r Runner) runModel(parent context.Context, model string, rng *rand.Rand) Result {
 	started := time.Now()
 	res := Result{
-		Provider: r.Provider.Name(),
-		Model:    model,
+		Model: model,
 	}
 
 	tmp, err := os.MkdirTemp("", "api-alive-*")
@@ -83,7 +75,6 @@ func (r Runner) runModel(parent context.Context, model string, rng *rand.Rand) R
 		return res
 	}
 	defer os.RemoveAll(tmp)
-	res.TempDir = tmp
 
 	for attempt := 1; attempt <= r.Config.LoopCount; attempt++ {
 		prompt := r.Prompts[rng.Intn(len(r.Prompts))]
@@ -97,31 +88,17 @@ func (r Runner) runModel(parent context.Context, model string, rng *rand.Rand) R
 
 func (r Runner) runAttempt(parent context.Context, model string, prompt PromptCase, tmp string, started time.Time, attempt int) Result {
 	res := Result{
-		Provider: r.Provider.Name(),
 		Model:    model,
 		Attempts: attempt,
 		Prompt:   prompt.Input,
 		Expected: prompt.Expected,
-		TempDir:  tmp,
 	}
 
-	command := r.Provider.ShellCommand(model, prompt)
-	res.ShellCommand = command
-	if r.DryRun {
-		res.Success = true
-		res.Output = "dry-run: " + command
-		res.Duration = time.Since(started)
-		res.DurationMS = res.Duration.Milliseconds()
-		return res
-	}
-
+	command := r.shellCommand(model, prompt)
 	ctx, cancel := context.WithTimeout(parent, r.Config.Timeout())
 	defer cancel()
 
 	cmd := shellForContext(ctx, command)
-	if direct, ok := r.Provider.(DirectCommandProvider); ok {
-		cmd = direct.CommandContext(ctx, model, prompt)
-	}
 	cmd.Dir = tmp
 	outputBytes, err := cmd.CombinedOutput()
 	output := string(outputBytes)
@@ -148,6 +125,13 @@ func (r Runner) runAttempt(parent context.Context, model string, prompt PromptCa
 	res.Duration = time.Since(started)
 	res.DurationMS = res.Duration.Milliseconds()
 	return res
+}
+
+func (r Runner) shellCommand(model string, prompt PromptCase) string {
+	if r.commandBuilder != nil {
+		return r.commandBuilder(model, prompt)
+	}
+	return CodexShellCommand(r.Config.CodexCommand, model, prompt)
 }
 
 func commandFailureMessage(err error, output string) string {

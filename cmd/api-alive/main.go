@@ -1,277 +1,271 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"log"
+	"net"
+	"net/http"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"test-api-alive/internal/alive"
 )
 
-var version = "dev"
-
 const defaultConfigPath = "config.json"
 
+type server struct {
+	configPath string
+	mux        *http.ServeMux
+}
+
+type appState struct {
+	Config     alive.Config `json:"config"`
+	ConfigPath string       `json:"config_path"`
+}
+
+type configRequest struct {
+	Models         []string `json:"models"`
+	TimeoutSeconds int      `json:"timeout_seconds"`
+	LoopCount      int      `json:"loop_count"`
+	CodexCommand   string   `json:"codex_command"`
+	MaxOutputChars int      `json:"max_output_chars"`
+	ListenAddr     string   `json:"listen_addr"`
+}
+
+type modelsRequest struct {
+	Models []string `json:"models"`
+}
+
+type probeRequest struct {
+	Models []string `json:"models"`
+}
+
+type probeResponse struct {
+	Results []alive.Result `json:"results"`
+}
+
 func main() {
-	os.Exit(run())
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run() int {
-	return runWithArgs(os.Args[1:], os.Stdout, os.Stderr)
-}
-
-func runWithArgs(args []string, stdout, stderr io.Writer) int {
-	if len(args) > 0 {
-		switch args[0] {
-		case "list":
-			return runList(args[1:], stdout, stderr)
-		case "add":
-			return runAdd(args[1:], stdout, stderr)
-		case "remove":
-			return runRemove(args[1:], stdout, stderr)
-		case "exclude":
-			return runExclude(args[1:], stdout, stderr)
-		}
-	}
-	return runProbe(args, stdout, stderr)
-}
-
-func runProbe(args []string, stdout, stderr io.Writer) int {
-	return runProbeWithExcludes("api-alive", args, nil, false, stdout, stderr)
-}
-
-func runExclude(args []string, stdout, stderr io.Writer) int {
-	return runProbeWithExcludes("api-alive exclude", args, nil, true, stdout, stderr)
-}
-
-func runProbeWithExcludes(commandName string, args, excludePrefixes []string, requireExcludePrefixes bool, stdout, stderr io.Writer) int {
-	var (
-		configPath  string
-		modelsCSV   string
-		provider    string
-		wslCommand  string
-		wslDistro   string
-		timeout     int
-		loops       int
-		jsonOutput  bool
-		dryRun      bool
-		listPrompts bool
-		showVersion bool
-	)
-
-	fs := flag.NewFlagSet(commandName, flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.StringVar(&configPath, "config", "", "Path to JSON config file (default config.json)")
-	fs.StringVar(&modelsCSV, "models", "", "Comma-separated model names; overrides config.models")
-	fs.StringVar(&provider, "provider", "", "Provider adapter: codex, codex-wsl, or claude")
-	fs.StringVar(&wslCommand, "wsl-command", "", "WSL executable for codex-wsl provider")
-	fs.StringVar(&wslDistro, "wsl-distro", "", "WSL distribution for codex-wsl provider")
-	fs.IntVar(&timeout, "timeout", 0, "Per-model timeout in seconds")
-	fs.IntVar(&loops, "loops", 0, "Maximum probe attempts per model")
-	fs.BoolVar(&jsonOutput, "json", false, "Print one JSON object per result")
-	fs.BoolVar(&dryRun, "dry-run", false, "Print commands without executing provider CLI")
-	fs.BoolVar(&listPrompts, "list-prompts", false, "Print built-in prompt cases as JSON and exit")
-	fs.BoolVar(&showVersion, "version", false, "Print version and exit")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if requireExcludePrefixes {
-		excludePrefixes = append(excludePrefixes, fs.Args()...)
-		if !hasNonEmptyArg(excludePrefixes) {
-			fmt.Fprintln(stderr, "at least one model prefix is required")
-			return 1
-		}
-	} else if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "unknown command or argument: %s\n", fs.Arg(0))
-		return 1
-	}
-
-	if showVersion {
-		fmt.Fprintln(stdout, version)
-		return 0
-	}
-	if listPrompts {
-		data, err := json.MarshalIndent(alive.DefaultPrompts, "", "  ")
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		fmt.Fprintln(stdout, string(data))
-		return 0
-	}
-
-	cfg, err := loadConfig(configPath, strings.TrimSpace(configPath) == "")
-	if err != nil {
-		fmt.Fprintln(stderr, "load config:", err)
-		return 1
-	}
-	if models := alive.SplitCSV(modelsCSV); len(models) > 0 {
-		cfg.Models = models
-	}
-	if strings.TrimSpace(provider) != "" {
-		cfg.Provider = strings.TrimSpace(provider)
-	}
-	if strings.TrimSpace(wslCommand) != "" {
-		cfg.WSLCommand = strings.TrimSpace(wslCommand)
-	}
-	if strings.TrimSpace(wslDistro) != "" {
-		cfg.WSLDistro = strings.TrimSpace(wslDistro)
-	}
-	if timeout > 0 {
-		cfg.TimeoutSeconds = timeout
-	}
-	if loops > 0 {
-		cfg.LoopCount = loops
-	}
-	cfg.ApplyDefaults()
-	if len(excludePrefixes) > 0 {
-		cfg.Models = alive.ExcludeModelsByPrefix(cfg.Models, excludePrefixes)
-	}
-
-	providerImpl, err := alive.NewProvider(cfg)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	runner := alive.Runner{Config: cfg, Provider: providerImpl, Prompts: alive.DefaultPrompts, DryRun: dryRun}
-	results, err := runner.Run(context.Background())
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-
-	failed := false
-	modelWidth := alive.ModelColumnWidth(cfg.Models)
-	for res := range results {
-		if jsonOutput {
-			if err := alive.PrintJSONLine(stdout, res); err != nil {
-				fmt.Fprintln(stderr, err)
-				return 1
-			}
-		} else {
-			alive.PrintHumanAligned(stdout, res, modelWidth)
-		}
-		if !res.Success {
-			failed = true
-		}
-	}
-	if failed {
-		return 2
-	}
-	return 0
-}
-
-func hasNonEmptyArg(args []string) bool {
-	for _, arg := range args {
-		if strings.TrimSpace(arg) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-func runList(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdout, stderr io.Writer) int {
 	var configPath string
-	fs := flag.NewFlagSet("api-alive list", flag.ContinueOnError)
+	fs := flag.NewFlagSet("api-alive", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.StringVar(&configPath, "config", "", "Path to JSON config file (default config.json)")
+	fs.StringVar(&configPath, "config", defaultConfigPath, "Path to JSON config file")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "unexpected list argument: %s\n", fs.Arg(0))
+		fmt.Fprintf(stderr, "unexpected argument: %s\n", fs.Arg(0))
 		return 1
 	}
 
-	cfg, err := loadConfig(configPath, strings.TrimSpace(configPath) == "")
+	srv := newServer(configPath)
+	cfg, err := srv.loadConfig()
 	if err != nil {
 		fmt.Fprintln(stderr, "load config:", err)
 		return 1
 	}
-	for _, model := range cfg.Models {
-		fmt.Fprintln(stdout, model)
-	}
-	return 0
-}
-
-func runAdd(args []string, stdout, stderr io.Writer) int {
-	var configPath string
-	fs := flag.NewFlagSet("api-alive add", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.StringVar(&configPath, "config", "", "Path to JSON config file (default config.json)")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if fs.NArg() == 0 {
-		fmt.Fprintln(stderr, "at least one model is required")
-		return 1
-	}
-
-	path := resolveConfigPath(configPath)
-	cfg, err := loadConfig(configPath, true)
+	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
-		fmt.Fprintln(stderr, "load config:", err)
+		fmt.Fprintln(stderr, "listen:", err)
 		return 1
 	}
-	before := len(alive.AddModels(cfg.Models, nil))
-	cfg.Models = alive.AddModels(cfg.Models, fs.Args())
-	if err := alive.SaveConfig(path, cfg); err != nil {
-		fmt.Fprintln(stderr, "save config:", err)
+	fmt.Fprintf(stdout, "api-alive listening on http://%s\n", listener.Addr().String())
+	if err := http.Serve(listener, srv.mux); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Print(err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "added %d model(s)\n", len(cfg.Models)-before)
 	return 0
 }
 
-func runRemove(args []string, stdout, stderr io.Writer) int {
-	var configPath string
-	fs := flag.NewFlagSet("api-alive remove", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.StringVar(&configPath, "config", "", "Path to JSON config file (default config.json)")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if fs.NArg() == 0 {
-		fmt.Fprintln(stderr, "at least one model is required")
-		return 1
-	}
+func newServer(configPath string) *server {
+	s := &server{configPath: configPath, mux: http.NewServeMux()}
+	s.mux.HandleFunc("/", s.handleIndex)
+	s.mux.HandleFunc("/api/state", s.handleState)
+	s.mux.HandleFunc("/api/config", s.handleConfig)
+	s.mux.HandleFunc("/api/models", s.handleModels)
+	s.mux.HandleFunc("/api/probe", s.handleProbe)
+	return s
+}
 
-	path := resolveConfigPath(configPath)
-	cfg, err := loadConfig(configPath, true)
+func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = io.WriteString(w, indexHTML)
+}
+
+func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	cfg, err := s.loadConfig()
 	if err != nil {
-		fmt.Fprintln(stderr, "load config:", err)
-		return 1
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	before := len(alive.AddModels(cfg.Models, nil))
-	cfg.Models = alive.RemoveModels(cfg.Models, fs.Args())
-	if err := alive.SaveConfig(path, cfg); err != nil {
-		fmt.Fprintln(stderr, "save config:", err)
-		return 1
-	}
-	fmt.Fprintf(stdout, "removed %d model(s)\n", before-len(cfg.Models))
-	return 0
+	writeJSON(w, appState{Config: cfg, ConfigPath: s.configPath})
 }
 
-func loadConfig(path string, allowMissing bool) (alive.Config, error) {
-	cfg, err := alive.LoadConfig(resolveConfigPath(path))
+func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req configRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	cfg, err := s.loadConfig()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cfg.Models = alive.AddModels(nil, req.Models)
+	cfg.TimeoutSeconds = req.TimeoutSeconds
+	cfg.LoopCount = req.LoopCount
+	cfg.CodexCommand = strings.TrimSpace(req.CodexCommand)
+	cfg.MaxOutputChars = req.MaxOutputChars
+	cfg.ListenAddr = strings.TrimSpace(req.ListenAddr)
+	cfg.ApplyDefaults()
+	if err := alive.SaveConfig(s.configPath, cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, cfg)
+}
+
+func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		var req modelsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		cfg, err := s.loadConfig()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		cfg.Models = alive.AddModels(cfg.Models, req.Models)
+		if err := alive.SaveConfig(s.configPath, cfg); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, cfg)
+	case http.MethodDelete:
+		var req modelsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		cfg, err := s.loadConfig()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		cfg.Models = alive.RemoveModels(cfg.Models, req.Models)
+		if err := alive.SaveConfig(s.configPath, cfg); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, cfg)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *server) handleProbe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req probeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	models := alive.AddModels(nil, req.Models)
+	if len(models) == 0 {
+		writeError(w, http.StatusBadRequest, "select at least one model")
+		return
+	}
+	cfg, err := s.loadConfig()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cfg.Models = models
+	cfg.ApplyDefaults()
+	if err := cfg.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	runner := alive.Runner{Config: cfg, Prompts: alive.DefaultPrompts}
+	ch, err := runner.Run(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	results := make([]alive.Result, 0, len(models))
+	for result := range ch {
+		results = append(results, result)
+	}
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].Model < results[j].Model
+	})
+	writeJSON(w, probeResponse{Results: results})
+}
+
+func (s *server) loadConfig() (alive.Config, error) {
+	cfg, err := alive.LoadConfig(s.configPath)
 	if err == nil {
 		return cfg, nil
 	}
-	if allowMissing && errors.Is(err, os.ErrNotExist) {
-		return alive.DefaultConfig(), nil
+	if errors.Is(err, os.ErrNotExist) {
+		cfg = alive.DefaultConfig()
+		cfg.ApplyDefaults()
+		if err := ensureConfigDir(s.configPath); err != nil {
+			return cfg, err
+		}
+		if err := alive.SaveConfig(s.configPath, cfg); err != nil {
+			return cfg, err
+		}
+		return cfg, nil
 	}
 	return cfg, err
 }
 
-func resolveConfigPath(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return defaultConfigPath
+func ensureConfigDir(path string) error {
+	dir := filepath.Dir(path)
+	if dir == "." || dir == "" {
+		return nil
 	}
-	return path
+	return os.MkdirAll(dir, 0o755)
+}
+
+func writeJSON(w http.ResponseWriter, value any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }

@@ -1,11 +1,8 @@
 {
-  "provider": "codex",
   "models": ["gpt-5"],
   "timeout_seconds": 120,
   "loop_count": 1,
   "codex_command": "codex",
-  "claude_command": "claude",
-  "wsl_command": "wsl.exe",
-  "wsl_distro": "",
+  "listen_addr": "0.0.0.0:8080",
   "max_output_chars": 4000
 }

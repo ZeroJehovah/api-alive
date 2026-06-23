@@ -29,7 +29,7 @@ const indexHTML = `<!doctype html>
       color: var(--text);
       letter-spacing: 0;
     }
-    button, input, select { font: inherit; }
+    button, input { font: inherit; }
     button {
       border: 1px solid transparent;
       background: var(--accent);
@@ -51,9 +51,8 @@ const indexHTML = `<!doctype html>
       border-color: var(--line);
     }
     button.secondary:hover { background: #f8fafc; }
-    button.danger { background: var(--danger); }
     button:disabled { opacity: .55; cursor: default; }
-    input, select {
+    input {
       width: 100%;
       min-height: 36px;
       border: 1px solid var(--line);
@@ -63,7 +62,7 @@ const indexHTML = `<!doctype html>
       padding: 7px 10px;
       outline: none;
     }
-    input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15, 118, 110, .12); }
+    input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15, 118, 110, .12); }
     label { font-size: 12px; color: var(--muted); display: grid; gap: 6px; }
     .app { max-width: 1180px; margin: 0 auto; padding: 24px; }
     .top {
@@ -79,7 +78,7 @@ const indexHTML = `<!doctype html>
     .status strong { color: var(--text); }
     .grid {
       display: grid;
-      grid-template-columns: 340px 1fr;
+      grid-template-columns: 320px 1fr;
       gap: 18px;
       align-items: start;
     }
@@ -180,7 +179,7 @@ const indexHTML = `<!doctype html>
     <section class="top">
       <div class="brand">
         <h1>API Alive</h1>
-        <p>Codex WSL model liveness dashboard</p>
+        <p>VPS Codex model liveness dashboard</p>
       </div>
       <div class="status">
         <div><strong id="configPath">config.json</strong></div>
@@ -190,17 +189,13 @@ const indexHTML = `<!doctype html>
 
     <section class="grid">
       <aside class="panel">
-        <header><h2>Runtime</h2><button class="secondary" id="reloadBtn" title="Refresh">Refresh</button></header>
+        <header><h2>Runtime</h2><button class="secondary" id="reloadBtn">Refresh</button></header>
         <div class="body settings">
-          <label>WSL distribution
-            <input id="wslDistro" list="distroList" placeholder="Ubuntu">
-            <datalist id="distroList"></datalist>
-          </label>
-          <label>WSL command
-            <input id="wslCommand" placeholder="wsl.exe">
-          </label>
           <label>Codex command
             <input id="codexCommand" placeholder="codex">
+          </label>
+          <label>Listen address
+            <input id="listenAddr" placeholder="0.0.0.0:8080">
           </label>
           <div class="row">
             <label>Timeout seconds
@@ -243,7 +238,6 @@ const indexHTML = `<!doctype html>
   <script>
     const state = { config: null, selected: new Set(), results: new Map(), running: false };
     const $ = (id) => document.getElementById(id);
-
     function setMessage(text) { $("message").textContent = text; }
     function resultFor(model) { return state.results.get(model) || null; }
     function escapeText(value) {
@@ -277,11 +271,9 @@ const indexHTML = `<!doctype html>
         $("modelHost").innerHTML = "<div class=\"empty\">No models configured.</div>";
         return;
       }
-      $("modelHost").innerHTML = "<table>" +
-        "<thead><tr>" +
-          "<th class=\"check\"></th><th>Model</th><th class=\"result\">Result</th><th class=\"attempts\">Attempts</th><th class=\"duration\">Seconds</th><th class=\"row-actions\"></th>" +
-        "</tr></thead>" +
-        "<tbody>" + models.map(model => {
+      $("modelHost").innerHTML = "<table><thead><tr>" +
+        "<th class=\"check\"></th><th>Model</th><th class=\"result\">Result</th><th class=\"attempts\">Attempts</th><th class=\"duration\">Seconds</th><th class=\"row-actions\"></th>" +
+        "</tr></thead><tbody>" + models.map(model => {
           const res = resultFor(model);
           const checked = state.selected.has(model) ? "checked" : "";
           const seconds = res && !res.running ? (res.duration_ms / 1000).toFixed(3) : "";
@@ -308,9 +300,8 @@ const indexHTML = `<!doctype html>
       setBusy(state.running);
     }
     function fillForm(config) {
-      $("wslDistro").value = config.wsl_distro || "";
-      $("wslCommand").value = config.wsl_command || "wsl.exe";
       $("codexCommand").value = config.codex_command || "codex";
+      $("listenAddr").value = config.listen_addr || "0.0.0.0:8080";
       $("timeoutSeconds").value = config.timeout_seconds || 120;
       $("loopCount").value = config.loop_count || 1;
     }
@@ -326,18 +317,14 @@ const indexHTML = `<!doctype html>
       state.config = data.config;
       state.selected = new Set([...state.selected].filter(model => state.config.models.includes(model)));
       $("configPath").textContent = data.config_path || "config.json";
-      const list = $("distroList");
-      list.innerHTML = (data.wsl_distros || []).map(d => "<option value=\"" + escapeText(d) + "\"></option>").join("");
       fillForm(state.config);
       renderModels();
       setMessage(state.config.models.length + " configured model(s)");
     }
     async function saveRuntime() {
       const cfg = { ...state.config };
-      cfg.provider = "codex-wsl";
-      cfg.wsl_distro = $("wslDistro").value.trim();
-      cfg.wsl_command = $("wslCommand").value.trim() || "wsl.exe";
       cfg.codex_command = $("codexCommand").value.trim() || "codex";
+      cfg.listen_addr = $("listenAddr").value.trim() || "0.0.0.0:8080";
       cfg.timeout_seconds = Number($("timeoutSeconds").value) || 120;
       cfg.loop_count = Number($("loopCount").value) || 1;
       state.config = await request("/api/config", { method: "POST", body: JSON.stringify(cfg) });
