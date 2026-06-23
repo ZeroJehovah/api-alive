@@ -319,6 +319,7 @@ const indexHTML = `<!doctype html>
           <h2>Log</h2>
           <div class="running-models" id="runningModels"></div>
         </div>
+        <button class="secondary" id="stopProbeBtn" disabled>Stop task</button>
       </header>
       <div class="body">
         <ul class="log-list" id="logList"></ul>
@@ -327,261 +328,218 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [] };
+    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [] };
     const maxLogEntries = 100;
+    const idlePollMS = 60000;
+    const runningPollMS = 5000;
+    let pollTimer = null;
     const $ = (id) => document.getElementById(id);
-    function setMessage(text) { $("message").textContent = text; }
+
+    function setMessage(text) { $('message').textContent = text; }
     function resultFor(model) { return state.results.get(model) || null; }
     function escapeText(value) {
-      return String(value ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;", "'":"&#39;" }[c]));
+      return String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+    }
+    function displayTime(value) {
+      if (!value) return '';
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString();
+    }
+    function schedulePoll() {
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(() => pollState().catch(err => {
+        setMessage(err.message);
+        schedulePoll();
+      }), state.running ? runningPollMS : idlePollMS);
     }
     function setBusy(value) {
       state.running = value;
-      $("runSelectedBtn").disabled = value || state.selected.size === 0;
-      $("deleteSelectedBtn").disabled = value || state.selected.size === 0;
-      document.querySelectorAll("[data-run-one]").forEach(btn => btn.disabled = value);
-      document.querySelectorAll("[data-move]").forEach(btn => {
-        btn.disabled = value || btn.dataset.boundary === "true";
-      });
+      $('runSelectedBtn').disabled = value || state.selected.size === 0;
+      $('deleteSelectedBtn').disabled = value || state.selected.size === 0;
+      $('stopProbeBtn').disabled = !value || state.task?.stopping;
+      $('stopProbeBtn').textContent = state.task?.stopping ? 'Stopping...' : 'Stop task';
+      document.querySelectorAll('[data-run-one]').forEach(btn => btn.disabled = value);
+      document.querySelectorAll('[data-move]').forEach(btn => { btn.disabled = value || btn.dataset.boundary === 'true'; });
       renderRunningModels();
     }
     function renderRunningModels() {
-      const host = $("runningModels");
+      const host = $('runningModels');
       const models = [...state.runningModels];
-      host.innerHTML = models.map(model => "<span class=\"running-model\" title=\"" + escapeText(model) + "\"><span class=\"live-dot\"></span><span>" + escapeText(model) + "</span></span>").join("");
+      host.innerHTML = models.map(model => '<span class="running-model" title="' + escapeText(model) + '"><span class="live-dot"></span><span>' + escapeText(model) + '</span></span>').join('');
     }
     function renderLog() {
-      const host = $("logList");
+      const host = $('logList');
       if (!state.logEntries.length) {
-        host.innerHTML = "<li class=\"log-empty\">Ready.</li>";
+        host.innerHTML = '<li class="log-empty">Ready.</li>';
         return;
       }
       host.innerHTML = state.logEntries.map(entry => {
-        const status = entry.success ? "success" : "failed";
-        const cls = entry.success ? "ok" : "bad";
-        const icon = entry.success ? "✅" : "❌";
-        const error = entry.success ? "" : "<div class=\"log-error\">error=" + escapeText(entry.error || "unknown error") + "</div>";
-        return "<li class=\"log-entry " + cls + "\">" +
-          "<div class=\"log-icon\">" + icon + "</div>" +
-          "<div class=\"log-main\">" +
-            "<div><strong>" + status + "</strong> <span class=\"log-model\">" + escapeText(entry.model) + "</span></div>" +
-            "<div class=\"log-meta\"><span>attempt=" + escapeText(entry.attempts) + "</span><span>seconds=" + escapeText((entry.duration_ms / 1000).toFixed(3)) + "</span></div>" +
-            error +
-          "</div>" +
-          "<time class=\"log-time\">" + escapeText(entry.time) + "</time>" +
-        "</li>";
-      }).join("");
-    }
-    function addLogEntries(results) {
-      const now = new Date().toLocaleTimeString();
-      const entries = [];
-      for (const res of results || []) {
-        const attempts = res.attempt_results && res.attempt_results.length ? res.attempt_results : [res];
-        for (const attempt of attempts) entries.push({ ...attempt, time: now });
-      }
-      state.logEntries = entries.reverse().concat(state.logEntries).slice(0, maxLogEntries);
-      renderLog();
+        const res = entry.result || entry;
+        const status = res.success ? 'success' : 'failed';
+        const cls = res.success ? 'ok' : 'bad';
+        const icon = res.success ? '✅' : '❌';
+        const error = res.success ? '' : '<div class="log-error">error=' + escapeText(res.error || 'unknown error') + '</div>';
+        return '<li class="log-entry ' + cls + '">' +
+          '<div class="log-icon">' + icon + '</div>' +
+          '<div class="log-main">' +
+            '<div><strong>' + status + '</strong> <span class="log-model">' + escapeText(res.model) + '</span></div>' +
+            '<div class="log-meta"><span>attempt=' + escapeText(res.attempts) + '</span><span>seconds=' + escapeText(((res.duration_ms || 0) / 1000).toFixed(3)) + '</span></div>' + error +
+          '</div><time class="log-time">' + escapeText(displayTime(entry.time)) + '</time></li>';
+      }).join('');
     }
     function updateSelectedCount() {
-      $("selectedCount").textContent = state.selected.size + " selected";
-      $("runSelectedBtn").disabled = state.running || state.selected.size === 0;
-      $("deleteSelectedBtn").disabled = state.running || state.selected.size === 0;
+      $('selectedCount').textContent = state.selected.size + ' selected';
+      $('runSelectedBtn').disabled = state.running || state.selected.size === 0;
+      $('deleteSelectedBtn').disabled = state.running || state.selected.size === 0;
       const models = state.config?.models || [];
-      $("selectAll").checked = models.length > 0 && state.selected.size === models.length;
-      $("selectAll").indeterminate = state.selected.size > 0 && state.selected.size < models.length;
+      $('selectAll').checked = models.length > 0 && state.selected.size === models.length;
+      $('selectAll').indeterminate = state.selected.size > 0 && state.selected.size < models.length;
     }
     function statusPill(model) {
+      if (state.runningModels.has(model)) return '<span class="pill run">Running</span>';
       const res = resultFor(model);
-      if (!res) return "<span class=\"pill\">Idle</span>";
-      if (res.running) return "<span class=\"pill run\">Running</span>";
-      if (res.success) return "<span class=\"pill ok\">Success</span>";
-      return "<span class=\"pill bad\">Failed</span>";
+      if (!res) return '<span class="pill">Idle</span>';
+      return res.success ? '<span class="pill ok">Success</span>' : '<span class="pill bad">Failed</span>';
     }
     function renderModels() {
       const models = state.config?.models || [];
       updateSelectedCount();
       if (!models.length) {
-        $("modelHost").innerHTML = "<div class=\"empty\">No models configured.</div>";
+        $('modelHost').innerHTML = '<div class="empty">No models configured.</div>';
         return;
       }
-      $("modelHost").innerHTML = "<table><thead><tr>" +
-        "<th class=\"check\"></th><th>Model</th><th class=\"order\">Order</th><th class=\"result\">Result</th><th class=\"attempts\">Attempts</th><th class=\"duration\">Seconds</th><th class=\"row-actions\"></th>" +
-        "</tr></thead><tbody>" + models.map((model, index) => {
-          const res = resultFor(model);
-          const checked = state.selected.has(model) ? "checked" : "";
-          const seconds = res && !res.running ? (res.duration_ms / 1000).toFixed(3) : "";
-          const attempts = res && !res.running ? res.attempts : "";
-          const upDisabled = index === 0 ? "disabled data-boundary=\"true\"" : "data-boundary=\"false\"";
-          const downDisabled = index === models.length - 1 ? "disabled data-boundary=\"true\"" : "data-boundary=\"false\"";
-          return "<tr>" +
-            "<td class=\"check\"><input data-select=\"" + escapeText(model) + "\" type=\"checkbox\" " + checked + "></td>" +
-            "<td class=\"model\" title=\"" + escapeText(model) + "\">" + escapeText(model) + "</td>" +
-            "<td class=\"order\"><div class=\"move-actions\">" +
-              "<button type=\"button\" class=\"secondary table-action\" data-move=\"up\" data-model=\"" + escapeText(model) + "\" " + upDisabled + ">Up</button>" +
-              "<button type=\"button\" class=\"secondary table-action\" data-move=\"down\" data-model=\"" + escapeText(model) + "\" " + downDisabled + ">Down</button>" +
-            "</div></td>" +
-            "<td class=\"result\">" + statusPill(model) + "</td>" +
-            "<td class=\"attempts\">" + escapeText(attempts) + "</td>" +
-            "<td class=\"duration\">" + escapeText(seconds) + "</td>" +
-            "<td class=\"row-actions\"><button type=\"button\" class=\"secondary table-action\" data-run-one=\"" + escapeText(model) + "\">Run</button></td>" +
-          "</tr>";
-        }).join("") + "</tbody></table>";
-      document.querySelectorAll("[data-select]").forEach(input => {
-        input.addEventListener("change", () => {
-          input.checked ? state.selected.add(input.dataset.select) : state.selected.delete(input.dataset.select);
-          updateSelectedCount();
-        });
-      });
-      document.querySelectorAll("[data-run-one]").forEach(button => {
-        button.addEventListener("click", () => runModels([button.dataset.runOne]));
-      });
-      document.querySelectorAll("[data-move]").forEach(button => {
-        button.addEventListener("click", () => moveModel(button.dataset.model, button.dataset.move));
-      });
+      $('modelHost').innerHTML = '<table><thead><tr><th class="check"></th><th>Model</th><th class="order">Order</th><th class="result">Result</th><th class="attempts">Attempts</th><th class="duration">Seconds</th><th class="row-actions"></th></tr></thead><tbody>' + models.map((model, index) => {
+        const res = resultFor(model);
+        const checked = state.selected.has(model) ? 'checked' : '';
+        const seconds = res && !state.runningModels.has(model) ? ((res.duration_ms || 0) / 1000).toFixed(3) : '';
+        const attempts = res && !state.runningModels.has(model) ? res.attempts : '';
+        const upDisabled = index === 0 ? 'disabled data-boundary="true"' : 'data-boundary="false"';
+        const downDisabled = index === models.length - 1 ? 'disabled data-boundary="true"' : 'data-boundary="false"';
+        return '<tr><td class="check"><input data-select="' + escapeText(model) + '" type="checkbox" ' + checked + '></td>' +
+          '<td class="model" title="' + escapeText(model) + '">' + escapeText(model) + '</td>' +
+          '<td class="order"><div class="move-actions">' +
+            '<button type="button" class="secondary table-action" data-move="up" data-model="' + escapeText(model) + '" ' + upDisabled + '>Up</button>' +
+            '<button type="button" class="secondary table-action" data-move="down" data-model="' + escapeText(model) + '" ' + downDisabled + '>Down</button>' +
+          '</div></td>' +
+          '<td class="result">' + statusPill(model) + '</td><td class="attempts">' + escapeText(attempts) + '</td><td class="duration">' + escapeText(seconds) + '</td>' +
+          '<td class="row-actions"><button type="button" class="secondary table-action" data-run-one="' + escapeText(model) + '">Run</button></td></tr>';
+      }).join('') + '</tbody></table>';
+      document.querySelectorAll('[data-select]').forEach(input => input.addEventListener('change', () => {
+        input.checked ? state.selected.add(input.dataset.select) : state.selected.delete(input.dataset.select);
+        updateSelectedCount();
+      }));
+      document.querySelectorAll('[data-run-one]').forEach(button => button.addEventListener('click', () => startProbe([button.dataset.runOne]).catch(err => setMessage(err.message))));
+      document.querySelectorAll('[data-move]').forEach(button => button.addEventListener('click', () => moveModel(button.dataset.model, button.dataset.move)));
       updateSelectedCount();
       setBusy(state.running);
     }
     function fillForm(config) {
-      $("codexCommand").value = config.codex_command || "codex";
-      $("listenAddr").value = config.listen_addr || "0.0.0.0:8080";
-      $("timeoutSeconds").value = config.timeout_seconds || 120;
-      $("loopCount").value = config.loop_count || 1;
-      $("maxOutputChars").value = config.max_output_chars || 4000;
+      $('codexCommand').value = config.codex_command || 'codex';
+      $('listenAddr').value = config.listen_addr || '0.0.0.0:8080';
+      $('timeoutSeconds').value = config.timeout_seconds || 120;
+      $('loopCount').value = config.loop_count || 1;
+      $('maxOutputChars').value = config.max_output_chars || 4000;
     }
-    async function request(path, options = {}) {
-      const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
-      return data;
+    function applyTask(task) {
+      state.task = task || {};
+      state.running = !!state.task.running;
+      state.runningModels = new Set(state.task.running_models || []);
+      state.results = new Map((state.task.results || []).map(res => [res.model, res]));
+      state.logEntries = (state.task.logs || []).slice(0, maxLogEntries);
+      renderLog();
+      renderRunningModels();
+      renderModels();
     }
-    async function requestProbeStream(models, onEvent) {
-      const res = await fetch("/api/probe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ models, stream: true })
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || ("HTTP " + res.status));
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed) onEvent(JSON.parse(trimmed));
-        }
-      }
-      buffer += decoder.decode();
-      if (buffer.trim()) onEvent(JSON.parse(buffer.trim()));
-    }
-    async function loadState() {
-      setMessage("Loading...");
-      const data = await request("/api/state");
+    function applyServerState(data) {
       state.config = data.config;
       state.selected = new Set([...state.selected].filter(model => state.config.models.includes(model)));
-      $("configPath").textContent = data.config_path || "config.json";
+      $('configPath').textContent = data.config_path || 'config.json';
       fillForm(state.config);
-      renderModels();
-      setMessage(state.config.models.length + " configured model(s)");
+      applyTask(data.task || {});
+      if (state.running) setMessage((state.task.stopping ? 'Stopping' : 'Running') + ' ' + state.runningModels.size + ' model(s)...');
+      else if (state.task?.id && state.task.error) setMessage('Last task failed: ' + state.task.error);
+      else if (state.task?.id && state.task.finished_at) setMessage('Last task finished. ' + state.config.models.length + ' configured model(s)');
+      else setMessage(state.config.models.length + ' configured model(s)');
+      schedulePoll();
     }
+    async function request(path, options = {}) {
+      const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+      return data;
+    }
+    async function loadState() { setMessage('Loading...'); applyServerState(await request('/api/state')); }
+    async function pollState() { applyServerState(await request('/api/state')); }
     async function saveRuntime() {
       const cfg = { ...state.config };
-      cfg.codex_command = $("codexCommand").value.trim() || "codex";
-      cfg.listen_addr = $("listenAddr").value.trim() || "0.0.0.0:8080";
-      cfg.timeout_seconds = Number($("timeoutSeconds").value) || 120;
-      cfg.loop_count = Number($("loopCount").value) || 1;
-      cfg.max_output_chars = Number($("maxOutputChars").value) || 4000;
-      state.config = await request("/api/config", { method: "POST", body: JSON.stringify(cfg) });
+      cfg.codex_command = $('codexCommand').value.trim() || 'codex';
+      cfg.listen_addr = $('listenAddr').value.trim() || '0.0.0.0:8080';
+      cfg.timeout_seconds = Number($('timeoutSeconds').value) || 120;
+      cfg.loop_count = Number($('loopCount').value) || 1;
+      cfg.max_output_chars = Number($('maxOutputChars').value) || 4000;
+      state.config = await request('/api/config', { method: 'POST', body: JSON.stringify(cfg) });
       fillForm(state.config);
-      setMessage("Runtime saved.");
+      renderModels();
+      setMessage('Runtime saved.');
+      schedulePoll();
     }
     async function addModel(name) {
       name = name.trim();
       if (!name) return;
-      state.config = await request("/api/models", { method: "POST", body: JSON.stringify({ models: [name] }) });
-      $("newModel").value = "";
+      state.config = await request('/api/models', { method: 'POST', body: JSON.stringify({ models: [name] }) });
+      $('newModel').value = '';
       renderModels();
-      setMessage("Added " + name);
+      setMessage('Added ' + name);
+      schedulePoll();
     }
     async function deleteSelected() {
       const models = [...state.selected];
-      if (!models.length) return;
-      state.config = await request("/api/models", { method: "DELETE", body: JSON.stringify({ models }) });
-      models.forEach(model => { state.selected.delete(model); state.results.delete(model); });
+      if (!models.length || state.running) return;
+      state.config = await request('/api/models', { method: 'DELETE', body: JSON.stringify({ models }) });
+      models.forEach(model => state.selected.delete(model));
       renderModels();
-      setMessage("Deleted " + models.length + " model(s)");
+      setMessage('Deleted ' + models.length + ' model(s)');
+      schedulePoll();
     }
     async function moveModel(model, direction) {
       if (state.running || !state.config) return;
       const models = [...(state.config.models || [])];
       const index = models.indexOf(model);
-      const nextIndex = direction === "up" ? index - 1 : index + 1;
+      const nextIndex = direction === 'up' ? index - 1 : index + 1;
       if (index < 0 || nextIndex < 0 || nextIndex >= models.length) return;
       [models[index], models[nextIndex]] = [models[nextIndex], models[index]];
-      state.config = await request("/api/config", { method: "POST", body: JSON.stringify({ ...state.config, models }) });
+      state.config = await request('/api/config', { method: 'POST', body: JSON.stringify({ ...state.config, models }) });
       renderModels();
-      setMessage("Model order saved.");
+      setMessage('Model order saved.');
+      schedulePoll();
     }
-    async function runModels(models) {
+    async function startProbe(models) {
       models = [...new Set(models)].filter(Boolean);
-      if (!models.length) return;
-      models.forEach(model => state.results.set(model, { running: true }));
-      state.runningModels = new Set(models);
-      renderModels();
-      setBusy(true);
-      let completed = 0;
-      let failed = 0;
-      try {
-        await requestProbeStream(models, event => {
-          const res = event.result;
-          if (!res || !res.model) return;
-          if (event.type === "attempt") {
-            addLogEntries([res]);
-            return;
-          }
-          if (event.type === "result") {
-            completed++;
-            if (!res.success) failed++;
-            if (!res.attempt_results || !res.attempt_results.length) addLogEntries([res]);
-            state.results.set(res.model, res);
-            state.runningModels.delete(res.model);
-            renderRunningModels();
-            renderModels();
-            setMessage("Completed " + completed + "/" + models.length + " model(s).");
-          }
-        });
-        setMessage(failed ? failed + " model(s) failed." : "All selected probes succeeded.");
-      } catch (err) {
-        const failedResults = [...state.runningModels].map(model => ({ model, success: false, attempts: 0, duration_ms: 0, error: err.message }));
-        failedResults.forEach(res => state.results.set(res.model, res));
-        addLogEntries(failedResults);
-        setMessage("Probe failed.");
-      } finally {
-        state.runningModels = new Set();
-        setBusy(false);
-        renderModels();
-      }
+      if (!models.length || state.running) return;
+      const data = await request('/api/probe', { method: 'POST', body: JSON.stringify({ models }) });
+      applyTask(data.task);
+      setMessage('Probe task started.');
+      schedulePoll();
     }
-    $("reloadBtn").addEventListener("click", () => loadState().catch(err => setMessage(err.message)));
-    $("saveConfigBtn").addEventListener("click", () => saveRuntime().catch(err => setMessage(err.message)));
-    $("addForm").addEventListener("submit", event => {
-      event.preventDefault();
-      addModel($("newModel").value).catch(err => setMessage(err.message));
-    });
-    $("selectAll").addEventListener("change", () => {
+    async function stopProbe() {
+      if (!state.running) return;
+      const data = await request('/api/probe/stop', { method: 'POST', body: '{}' });
+      applyTask(data.task);
+      setMessage('Stopping probe task...');
+      schedulePoll();
+    }
+
+    $('reloadBtn').addEventListener('click', () => loadState().catch(err => setMessage(err.message)));
+    $('saveConfigBtn').addEventListener('click', () => saveRuntime().catch(err => setMessage(err.message)));
+    $('stopProbeBtn').addEventListener('click', () => stopProbe().catch(err => setMessage(err.message)));
+    $('addForm').addEventListener('submit', event => { event.preventDefault(); addModel($('newModel').value).catch(err => setMessage(err.message)); });
+    $('selectAll').addEventListener('change', () => {
       const models = state.config?.models || [];
-      state.selected = $("selectAll").checked ? new Set(models) : new Set();
+      state.selected = $('selectAll').checked ? new Set(models) : new Set();
       renderModels();
     });
-    $("runSelectedBtn").addEventListener("click", () => runModels([...state.selected]));
-    $("deleteSelectedBtn").addEventListener("click", () => deleteSelected().catch(err => setMessage(err.message)));
+    $('runSelectedBtn').addEventListener('click', () => startProbe([...state.selected]).catch(err => setMessage(err.message)));
+    $('deleteSelectedBtn').addEventListener('click', () => deleteSelected().catch(err => setMessage(err.message)));
     renderLog();
     renderRunningModels();
     loadState().catch(err => setMessage(err.message));
