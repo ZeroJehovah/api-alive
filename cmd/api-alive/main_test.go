@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -152,11 +153,16 @@ func TestProbeTaskLifecyclePersistsStateAndRejectsConcurrentStart(t *testing.T) 
 	}
 }
 
-func TestProbeEndpointStartsTaskAndRejectsConcurrentRequest(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), "config.json")
+func TestProbeEndpointStartsTaskRejectsConcurrentRequestAndStops(t *testing.T) {
+	dir := t.TempDir()
+	commandPath := filepath.Join(dir, "fake-codex")
+	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\nsleep 2\necho OK\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "config.json")
 	cfg := alive.DefaultConfig()
 	cfg.Models = []string{"model-a"}
-	cfg.CodexCommand = "sh"
+	cfg.CodexCommand = commandPath
 	if err := alive.SaveConfig(configPath, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -172,6 +178,11 @@ func TestProbeEndpointStartsTaskAndRejectsConcurrentRequest(t *testing.T) {
 	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/probe", body))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("second probe status = %d, want 409; body = %q", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/probe/stop", strings.NewReader(`{}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stop status = %d, body = %q", rec.Code, rec.Body.String())
 	}
 }
 
