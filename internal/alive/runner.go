@@ -13,16 +13,17 @@ import (
 )
 
 type Result struct {
-	Model      string        `json:"model"`
-	Success    bool          `json:"success"`
-	Attempts   int           `json:"attempts"`
-	ExitCode   *int          `json:"exit_code,omitempty"`
-	Error      string        `json:"error,omitempty"`
-	Duration   time.Duration `json:"-"`
-	DurationMS int64         `json:"duration_ms"`
-	Prompt     string        `json:"prompt"`
-	Expected   string        `json:"expected"`
-	Output     string        `json:"output,omitempty"`
+	Model          string        `json:"model"`
+	Success        bool          `json:"success"`
+	Attempts       int           `json:"attempts"`
+	ExitCode       *int          `json:"exit_code,omitempty"`
+	Error          string        `json:"error,omitempty"`
+	Duration       time.Duration `json:"-"`
+	DurationMS     int64         `json:"duration_ms"`
+	Prompt         string        `json:"prompt"`
+	Expected       string        `json:"expected"`
+	Output         string        `json:"output,omitempty"`
+	AttemptResults []Result      `json:"attempt_results,omitempty"`
 }
 
 type Runner struct {
@@ -31,7 +32,34 @@ type Runner struct {
 	commandBuilder func(model string, prompt PromptCase) string
 }
 
+type Event struct {
+	Type   string `json:"type"`
+	Result Result `json:"result"`
+}
+
+const (
+	EventAttempt = "attempt"
+	EventResult  = "result"
+)
+
 func (r Runner) Run(ctx context.Context) (<-chan Result, error) {
+	events, err := r.RunEvents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results := make(chan Result)
+	go func() {
+		defer close(results)
+		for event := range events {
+			if event.Type == EventResult {
+				results <- event.Result
+			}
+		}
+	}()
+	return results, nil
+}
+
+func (r Runner) RunEvents(ctx context.Context) (<-chan Event, error) {
 	r.Config.ApplyDefaults()
 	if err := r.Config.Validate(); err != nil {
 		return nil, err
@@ -40,7 +68,7 @@ func (r Runner) Run(ctx context.Context) (<-chan Result, error) {
 		return nil, errors.New("prompts are empty")
 	}
 
-	results := make(chan Result)
+	events := make(chan Event)
 	var wg sync.WaitGroup
 	seed := time.Now().UnixNano()
 
@@ -50,18 +78,30 @@ func (r Runner) Run(ctx context.Context) (<-chan Result, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results <- r.runModel(ctx, model, rng)
+			result := r.runModelEvents(ctx, model, rng, events)
+			events <- Event{Type: EventResult, Result: result}
 		}()
 	}
 
 	go func() {
 		wg.Wait()
-		close(results)
+		close(events)
 	}()
-	return results, nil
+	return events, nil
 }
 
 func (r Runner) runModel(parent context.Context, model string, rng *rand.Rand) Result {
+	events := make(chan Event)
+	go func() {
+		for range events {
+		}
+	}()
+	result := r.runModelEvents(parent, model, rng, events)
+	close(events)
+	return result
+}
+
+func (r Runner) runModelEvents(parent context.Context, model string, rng *rand.Rand, events chan<- Event) Result {
 	started := time.Now()
 	res := Result{
 		Model: model,
@@ -76,13 +116,18 @@ func (r Runner) runModel(parent context.Context, model string, rng *rand.Rand) R
 	}
 	defer os.RemoveAll(tmp)
 
+	attemptResults := make([]Result, 0, r.Config.LoopCount)
 	for attempt := 1; attempt <= r.Config.LoopCount; attempt++ {
 		prompt := r.Prompts[rng.Intn(len(r.Prompts))]
 		res = r.runAttempt(parent, model, prompt, tmp, started, attempt)
+		attemptResults = append(attemptResults, res)
+		events <- Event{Type: EventAttempt, Result: res}
 		if res.Success {
+			res.AttemptResults = attemptResults
 			return res
 		}
 	}
+	res.AttemptResults = attemptResults
 	return res
 }
 

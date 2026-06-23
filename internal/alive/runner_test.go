@@ -123,6 +123,38 @@ func TestRunnerFailsWhenExpectedOutputIsMissing(t *testing.T) {
 	}
 }
 
+func TestRunnerEmitsAttemptEventsBeforeFinalResult(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Models = []string{"a"}
+	cfg.LoopCount = 2
+	r := Runner{
+		Config:         cfg,
+		commandBuilder: staticCommand(`n=$(cat tries 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > tries; if [ "$n" -lt 2 ]; then echo NO; else echo OK; fi`),
+		Prompts:        []PromptCase{{Input: "Say OK.", Expected: "OK"}},
+	}
+
+	events, err := r.RunEvents(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []Event
+	for event := range events {
+		got = append(got, event)
+	}
+	if len(got) != 3 {
+		t.Fatalf("event count = %d, want 3: %#v", len(got), got)
+	}
+	if got[0].Type != EventAttempt || got[0].Result.Attempts != 1 || got[0].Result.Success {
+		t.Fatalf("first event = %#v, want failed attempt 1", got[0])
+	}
+	if got[1].Type != EventAttempt || got[1].Result.Attempts != 2 || !got[1].Result.Success {
+		t.Fatalf("second event = %#v, want successful attempt 2", got[1])
+	}
+	if got[2].Type != EventResult || got[2].Result.Attempts != 2 || len(got[2].Result.AttemptResults) != 2 {
+		t.Fatalf("final event = %#v, want aggregate result with two attempts", got[2])
+	}
+}
+
 func staticCommand(command string) func(string, PromptCase) string {
 	return func(string, PromptCase) string { return command }
 }

@@ -44,6 +44,7 @@ type modelsRequest struct {
 
 type probeRequest struct {
 	Models []string `json:"models"`
+	Stream bool     `json:"stream"`
 }
 
 type probeResponse struct {
@@ -215,6 +216,10 @@ func (s *server) handleProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runner := alive.Runner{Config: cfg, Prompts: alive.DefaultPrompts}
+	if req.Stream {
+		s.streamProbe(w, r, runner)
+		return
+	}
 	ch, err := runner.Run(r.Context())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -232,6 +237,26 @@ func (s *server) handleProbe(w http.ResponseWriter, r *http.Request) {
 		return order[results[i].Model] < order[results[j].Model]
 	})
 	writeJSON(w, probeResponse{Results: results})
+}
+
+func (s *server) streamProbe(w http.ResponseWriter, r *http.Request, runner alive.Runner) {
+	events, err := runner.RunEvents(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	flusher, _ := w.(http.Flusher)
+	encoder := json.NewEncoder(w)
+	for event := range events {
+		if err := encoder.Encode(event); err != nil {
+			return
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
 }
 
 func (s *server) loadConfig() (alive.Config, error) {

@@ -16,7 +16,11 @@ import (
 func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 	for _, want := range []string{
 		`class="panel log-panel"`,
-		`white-space: pre;`,
+		`<ul class="log-list" id="logList"></ul>`,
+		`id="runningModels"`,
+		`maxLogEntries = 100`,
+		`requestProbeStream`,
+		`class=\"live-dot\"`,
 		`data-move=\"up\"`,
 		`data-move=\"down\"`,
 		`async function moveModel`,
