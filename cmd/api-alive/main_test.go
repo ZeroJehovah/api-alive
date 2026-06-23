@@ -13,6 +13,20 @@ import (
 	"api-alive/internal/alive"
 )
 
+func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
+	for _, want := range []string{
+		`class="panel log-panel"`,
+		`white-space: pre;`,
+		`data-move=\"up\"`,
+		`data-move=\"down\"`,
+		`async function moveModel`,
+	} {
+		if !strings.Contains(indexHTML, want) {
+			t.Fatalf("indexHTML missing %q", want)
+		}
+	}
+}
+
 func TestStateCreatesDefaultConfig(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	srv := newServer(configPath)
@@ -73,6 +87,19 @@ func TestConfigEndpointUpdatesRuntime(t *testing.T) {
 	if cfg.TimeoutSeconds != 30 || cfg.LoopCount != 2 || cfg.CodexCommand != "codex-beta" || cfg.ListenAddr != "127.0.0.1:0" || cfg.MaxOutputChars != 1234 {
 		t.Fatalf("unexpected config: %#v", cfg)
 	}
+}
+
+func TestConfigEndpointPreservesModelOrder(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	srv := newServer(configPath)
+	body := bytes.NewBufferString(`{"models":["model-b","model-a","model-b","model-c"],"timeout_seconds":30,"loop_count":1,"codex_command":"codex","listen_addr":"127.0.0.1:0","max_output_chars":4000}`)
+
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/config", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	assertConfigModels(t, configPath, []string{"model-b", "model-a", "model-c"})
 }
 
 func TestRunRejectsOldCLIArguments(t *testing.T) {

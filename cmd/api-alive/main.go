@@ -224,8 +224,12 @@ func (s *server) handleProbe(w http.ResponseWriter, r *http.Request) {
 	for result := range ch {
 		results = append(results, result)
 	}
+	order := make(map[string]int, len(models))
+	for index, model := range models {
+		order[model] = index
+	}
 	sort.SliceStable(results, func(i, j int) bool {
-		return results[i].Model < results[j].Model
+		return order[results[i].Model] < order[results[j].Model]
 	})
 	writeJSON(w, probeResponse{Results: results})
 }
