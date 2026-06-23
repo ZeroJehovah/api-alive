@@ -201,15 +201,27 @@ const indexHTML = `<!doctype html>
       0%, 100% { transform: scale(.82); box-shadow: 0 0 0 0 rgba(18, 183, 106, .45); opacity: .75; }
       50% { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(18, 183, 106, 0); opacity: 1; }
     }
-    .log-list {
-      display: grid;
-      gap: 8px;
+    .log-table-wrap {
       max-height: 340px;
       overflow: auto;
-      margin: 0;
-      padding: 0 4px 0 0;
-      list-style: none;
     }
+    .log-table { font-size: 12px; }
+    .log-table th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    .log-table th, .log-table td {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .log-status-col { width: 88px; }
+    .log-model-col { width: 28%; }
+    .log-attempt-col { width: 72px; }
+    .log-seconds-col { width: 80px; }
+    .log-time-col { width: 86px; }
+    .log-error-col { width: auto; }
     .log-empty {
       padding: 22px 12px;
       text-align: center;
@@ -219,22 +231,9 @@ const indexHTML = `<!doctype html>
       background: #fbfcfe;
       font-size: 13px;
     }
-    .log-entry {
-      display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto;
-      gap: 10px;
-      align-items: center;
-      padding: 10px 12px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
-      font-size: 12px;
-    }
-    .log-entry.ok { border-color: rgba(6, 118, 71, .24); background: rgba(6, 118, 71, .045); }
-    .log-entry.bad { border-color: rgba(180, 35, 24, .22); background: rgba(180, 35, 24, .045); }
-    .log-icon { line-height: 1; }
-    .log-main { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .log-meta { color: var(--muted); }
+    .log-entry.ok { background: rgba(6, 118, 71, .045); }
+    .log-entry.bad { background: rgba(180, 35, 24, .045); }
+    .log-status { font-weight: 700; }
     .log-model { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text); }
     .log-error { color: var(--danger); }
     .log-time { color: var(--muted); white-space: nowrap; }
@@ -324,7 +323,20 @@ const indexHTML = `<!doctype html>
         <button class="secondary" id="stopProbeBtn" disabled>Stop task</button>
       </header>
       <div class="body">
-        <ul class="log-list" id="logList"></ul>
+        <div class="log-table-wrap">
+          <table class="log-table">
+            <colgroup>
+              <col class="log-status-col">
+              <col class="log-model-col">
+              <col class="log-attempt-col">
+              <col class="log-seconds-col">
+              <col class="log-time-col">
+              <col class="log-error-col">
+            </colgroup>
+            <thead><tr><th>Status</th><th>Model</th><th>Try</th><th>Seconds</th><th>Time</th><th>Error</th></tr></thead>
+            <tbody id="logList"></tbody>
+          </table>
+        </div>
       </div>
     </section>
   </main>
@@ -382,7 +394,7 @@ const indexHTML = `<!doctype html>
     function renderLog() {
       const host = $('logList');
       if (!state.logEntries.length) {
-        host.innerHTML = '<li class="log-empty">Ready.</li>';
+        host.innerHTML = '<tr><td class="log-empty" colspan="6">Ready.</td></tr>';
         return;
       }
       host.innerHTML = state.logEntries.map(entry => {
@@ -392,15 +404,15 @@ const indexHTML = `<!doctype html>
         const icon = res.success ? '✅' : '❌';
         const seconds = ((res.duration_ms || 0) / 1000).toFixed(3);
         const time = displayTime(entry.time);
-        const errorText = res.success ? '' : ' error=' + (res.error || 'unknown error');
-        const logTitle = status + ' model=' + (res.model || '') + ' attempt=' + (res.attempts ?? '') + ' seconds=' + seconds + ' time=' + time + errorText;
-        const error = res.success ? '' : ' <span class="log-error">error=' + escapeText(res.error || 'unknown error') + '</span>';
-        return '<li class="log-entry ' + cls + '" title="' + escapeText(logTitle) + '">' +
-          '<div class="log-icon">' + icon + '</div>' +
-          '<div class="log-main">' +
-            '<strong>' + status + '</strong> <span class="log-model">' + escapeText(res.model) + '</span> ' +
-            '<span class="log-meta">attempt=' + escapeText(res.attempts) + ' seconds=' + escapeText(seconds) + '</span>' + error +
-          '</div><time class="log-time">' + escapeText(time) + '</time></li>';
+        const errorText = res.success ? '' : (res.error || 'unknown error');
+        const logTitle = status + ' model=' + (res.model || '') + ' attempt=' + (res.attempts ?? '') + ' seconds=' + seconds + ' time=' + time + (errorText ? ' error=' + errorText : '');
+        return '<tr class="log-entry ' + cls + '" title="' + escapeText(logTitle) + '">' +
+          '<td class="log-status">' + icon + ' ' + status + '</td>' +
+          '<td class="log-model">' + escapeText(res.model) + '</td>' +
+          '<td>' + escapeText(res.attempts) + '</td>' +
+          '<td>' + escapeText(seconds) + '</td>' +
+          '<td class="log-time">' + escapeText(time) + '</td>' +
+          '<td class="log-error">' + escapeText(errorText) + '</td></tr>';
       }).join('');
     }
     function updateSelectedCount() {

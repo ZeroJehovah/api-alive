@@ -17,12 +17,14 @@ import (
 func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 	for _, want := range []string{
 		`class="panel log-panel"`,
-		`<ul class="log-list" id="logList"></ul>`,
+		`<table class="log-table">`,
+		`<tbody id="logList"></tbody>`,
 		`id="runningModels"`,
 		`maxLogEntries = 100`,
 		`text-overflow: ellipsis`,
 		`title="' + escapeText(logTitle) + '">`,
-		`seconds=' + seconds + ' time=' + time + errorText`,
+		`' seconds=' + seconds + ' time=' + time + (errorText ? ' error=' + errorText : '')`,
+		`<th>Status</th><th>Model</th><th>Try</th><th>Seconds</th><th>Time</th><th>Error</th>`,
 		`idlePollMS = 60000`,
 		`runningPollMS = 5000`,
 		`async function startProbe`,
