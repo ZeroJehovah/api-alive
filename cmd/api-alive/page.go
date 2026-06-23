@@ -234,7 +234,7 @@ const indexHTML = `<!doctype html>
       text-overflow: ellipsis;
     }
     .log-status-col { width: 88px; }
-    .log-model-col { width: 28%; }
+    .log-model-col { width: 30ch; }
     .log-attempt-col { width: 72px; }
     .log-seconds-col { width: 80px; }
     .log-time-col { width: 86px; }
@@ -424,14 +424,13 @@ const indexHTML = `<!doctype html>
         const seconds = ((res.duration_ms || 0) / 1000).toFixed(3);
         const time = displayTime(entry.time);
         const errorText = res.success ? '' : (res.error || 'unknown error');
-        const logTitle = status + ' model=' + (res.model || '') + ' attempt=' + (res.attempts ?? '') + ' seconds=' + seconds + ' time=' + time + (errorText ? ' error=' + errorText : '');
-        return '<tr class="log-entry ' + cls + '" title="' + escapeText(logTitle) + '">' +
+        return '<tr class="log-entry ' + cls + '">' +
           '<td class="log-status">' + icon + ' ' + status + '</td>' +
           '<td class="log-model">' + escapeText(res.model) + '</td>' +
           '<td>' + escapeText(res.attempts) + '</td>' +
           '<td>' + escapeText(seconds) + '</td>' +
           '<td class="log-time">' + escapeText(time) + '</td>' +
-          '<td class="log-error">' + escapeText(errorText) + '</td></tr>';
+          '<td class="log-error" title="' + escapeText(errorText) + '">' + escapeText(errorText) + '</td></tr>';
       }).join('');
     }
     function updateSelectedCount() {
