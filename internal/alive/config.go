@@ -46,6 +46,16 @@ func LoadConfig(path string) (Config, error) {
 	return cfg, nil
 }
 
+func SaveConfig(path string, cfg Config) error {
+	cfg.ApplyDefaults()
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0o644)
+}
+
 func (c *Config) ApplyDefaults() {
 	if c.Provider == "" {
 		c.Provider = "codex"
@@ -99,6 +109,64 @@ func SplitCSV(value string) []string {
 		if part != "" {
 			out = append(out, part)
 		}
+	}
+	return out
+}
+
+func AddModels(existing, additions []string) []string {
+	out := normalizeModels(existing)
+	seen := make(map[string]struct{}, len(out)+len(additions))
+	for _, model := range out {
+		seen[model] = struct{}{}
+	}
+	for _, model := range additions {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		out = append(out, model)
+		seen[model] = struct{}{}
+	}
+	return out
+}
+
+func RemoveModels(existing, removals []string) []string {
+	remove := make(map[string]struct{}, len(removals))
+	for _, model := range removals {
+		model = strings.TrimSpace(model)
+		if model != "" {
+			remove[model] = struct{}{}
+		}
+	}
+	out := normalizeModels(existing)
+	if len(remove) == 0 {
+		return out
+	}
+	kept := out[:0]
+	for _, model := range out {
+		if _, ok := remove[model]; !ok {
+			kept = append(kept, model)
+		}
+	}
+	return kept
+}
+
+func normalizeModels(models []string) []string {
+	out := make([]string, 0, len(models))
+	seen := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		out = append(out, model)
+		seen[model] = struct{}{}
 	}
 	return out
 }

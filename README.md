@@ -12,7 +12,15 @@ go build -o bin/api-alive ./cmd/api-alive
 
 ## Usage
 
-Run probes for comma-separated model names:
+By default, `api-alive` reads `config.json` from the current directory.
+
+Run probes for models from `config.json`:
+
+```sh
+go run ./cmd/api-alive
+```
+
+Run probes for comma-separated model names, overriding `config.json`:
 
 ```sh
 go run ./cmd/api-alive --models gpt-5,gpt-5-mini
@@ -28,6 +36,24 @@ Use a JSON config file:
 
 ```sh
 go run ./cmd/api-alive --config config.example.json
+```
+
+List models from the current `config.json`:
+
+```sh
+go run ./cmd/api-alive list
+```
+
+Add models to the current `config.json`:
+
+```sh
+go run ./cmd/api-alive add gpt-5 gpt-5-mini
+```
+
+Remove models from the current `config.json`:
+
+```sh
+go run ./cmd/api-alive remove gpt-5-mini
 ```
 
 Print one JSON object per completed probe:
@@ -63,6 +89,8 @@ go run ./cmd/api-alive --list-prompts
 ```
 
 CLI flags override config values for `--models`, `--provider`, `--timeout`, and `--loops`.
+
+The `list`, `add`, and `remove` commands use `config.json` by default. Pass `--config <path>` after the command to manage a different config file.
 
 ## Result Rules
 
