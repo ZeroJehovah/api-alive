@@ -160,10 +160,18 @@ const indexHTML = `<!doctype html>
       background: #fff;
       color: var(--muted);
       white-space: nowrap;
+      gap: 6px;
     }
     .pill.ok { color: var(--ok); border-color: rgba(6, 118, 71, .25); background: rgba(6, 118, 71, .08); }
     .pill.bad { color: var(--danger); border-color: rgba(180, 35, 24, .24); background: rgba(180, 35, 24, .08); }
-    .pill.run { color: var(--warn); border-color: rgba(181, 71, 8, .24); background: rgba(181, 71, 8, .08); }
+    .pill.run { color: #1d4ed8; border-color: rgba(37, 99, 235, .28); background: rgba(37, 99, 235, .08); }
+    .pill.run .live-dot {
+      width: 7px;
+      height: 7px;
+      background: #2563eb;
+      box-shadow: 0 0 0 0 rgba(37, 99, 235, .55);
+      animation: blue-breathe 1.4s ease-in-out infinite;
+    }
     .empty {
       padding: 36px 12px;
       text-align: center;
@@ -217,6 +225,10 @@ const indexHTML = `<!doctype html>
     @keyframes breathe {
       0%, 100% { transform: scale(.82); box-shadow: 0 0 0 0 rgba(18, 183, 106, .45); opacity: .75; }
       50% { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(18, 183, 106, 0); opacity: 1; }
+    }
+    @keyframes blue-breathe {
+      0%, 100% { transform: scale(.82); box-shadow: 0 0 0 0 rgba(37, 99, 235, .45); opacity: .75; }
+      50% { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(37, 99, 235, 0); opacity: 1; }
     }
     .log-table-wrap {
       max-height: 340px;
@@ -324,6 +336,7 @@ const indexHTML = `<!doctype html>
               <button class="secondary" id="editModelsBtn" type="button">Edit</button>
               <button class="secondary" id="cancelEditBtn" type="button" hidden>Cancel</button>
               <button id="runSelectedBtn">Run selected</button>
+              <button class="secondary" id="stopProbeBtn" disabled>Stop task</button>
             </div>
           </div>
           <div id="modelHost"></div>
@@ -335,9 +348,7 @@ const indexHTML = `<!doctype html>
       <header>
         <div class="log-title">
           <h2>Log</h2>
-          <div class="running-models" id="runningModels"></div>
         </div>
-        <button class="secondary" id="stopProbeBtn" disabled>Stop task</button>
       </header>
       <div class="body">
         <div class="log-table-wrap">
@@ -407,6 +418,7 @@ const indexHTML = `<!doctype html>
     }
     function renderRunningModels() {
       const host = $('runningModels');
+      if (!host) return;
       const models = [...state.runningModels];
       host.innerHTML = models.map(model => '<span class="running-model" title="' + escapeText(model) + '"><span class="live-dot"></span><span>' + escapeText(model) + '</span></span>').join('');
     }
@@ -449,7 +461,7 @@ const indexHTML = `<!doctype html>
       $('selectAll').indeterminate = state.selected.size > 0 && state.selected.size < models.length;
     }
     function statusPill(model) {
-      if (state.runningModels.has(model)) return '<span class="pill run">Running</span>';
+      if (state.runningModels.has(model)) return '<span class="pill run"><span class="live-dot"></span>Running</span>';
       const res = resultFor(model);
       if (!res) return '<span class="pill">Idle</span>';
       return res.success ? '<span class="pill ok">Success</span>' : '<span class="pill bad">Failed</span>';
@@ -493,7 +505,7 @@ const indexHTML = `<!doctype html>
         const res = resultFor(model);
         const checked = state.selected.has(model) ? 'checked' : '';
         const seconds = res && !state.runningModels.has(model) ? ((res.duration_ms || 0) / 1000).toFixed(3) : '';
-        const attempts = res && !state.runningModels.has(model) ? res.attempts : '';
+        const attempts = res ? res.attempts : '';
         return '<tr><td class="check"><input data-select="' + escapeText(model) + '" type="checkbox" ' + checked + '></td>' +
           '<td class="model" title="' + escapeText(model) + '">' + escapeText(model) + '</td>' +
           '<td class="result">' + statusPill(model) + '</td><td class="attempts">' + escapeText(attempts) + '</td><td class="duration">' + escapeText(seconds) + '</td>' +

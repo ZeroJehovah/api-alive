@@ -66,6 +66,7 @@ type probeTask struct {
 	StartedAt     string          `json:"started_at,omitempty"`
 	FinishedAt    string          `json:"finished_at,omitempty"`
 	Error         string          `json:"error,omitempty"`
+	LoopCount     int             `json:"-"`
 }
 
 type probeLogEntry struct {
@@ -248,7 +249,7 @@ func (s *server) handleProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runner := alive.Runner{Config: cfg, Prompts: alive.DefaultPrompts}
-	task, ctx, err := s.tasks.start(models)
+	task, ctx, err := s.tasks.start(models, cfg.LoopCount)
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -302,7 +303,7 @@ func (s *server) streamProbe(w http.ResponseWriter, r *http.Request, runner aliv
 	}
 }
 
-func (ts *taskStore) start(models []string) (probeTask, context.Context, error) {
+func (ts *taskStore) start(models []string, loopCount int) (probeTask, context.Context, error) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	if ts.task.Running {
@@ -318,8 +319,9 @@ func (ts *taskStore) start(models []string) (probeTask, context.Context, error) 
 		Models:        append([]string(nil), models...),
 		RunningModels: append([]string(nil), models...),
 		StartedAt:     now,
-		Results:       []alive.Result{},
+		Results:       initialRunningResults(models),
 		Logs:          logs,
+		LoopCount:     loopCount,
 	}
 	ts.task = task
 	ts.cancel = cancel
@@ -353,6 +355,7 @@ func (ts *taskStore) applyEvent(taskID int64, event alive.Event) {
 	}
 	res := event.Result
 	if event.Type == alive.EventAttempt {
+		ts.task.Results = upsertResult(ts.task.Results, displayAttemptResult(res, ts.task.LoopCount))
 		ts.prependLogLocked(res)
 		return
 	}
@@ -398,6 +401,21 @@ func (ts *taskStore) prependLogLocked(res alive.Result) {
 	if len(ts.task.Logs) > maxServerLogEntries {
 		ts.task.Logs = ts.task.Logs[:maxServerLogEntries]
 	}
+}
+
+func initialRunningResults(models []string) []alive.Result {
+	results := make([]alive.Result, 0, len(models))
+	for _, model := range models {
+		results = append(results, alive.Result{Model: model, Attempts: 1})
+	}
+	return results
+}
+
+func displayAttemptResult(res alive.Result, loopCount int) alive.Result {
+	if !res.Success && loopCount > 0 && res.Attempts < loopCount {
+		res.Attempts++
+	}
+	return res
 }
 
 func upsertResult(results []alive.Result, res alive.Result) []alive.Result {
