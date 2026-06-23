@@ -205,6 +205,9 @@ const indexHTML = `<!doctype html>
               <input id="loopCount" type="number" min="1" step="1">
             </label>
           </div>
+          <label>Max output chars
+            <input id="maxOutputChars" type="number" min="1" step="1">
+          </label>
           <button id="saveConfigBtn">Save runtime</button>
         </div>
       </aside>
@@ -304,6 +307,7 @@ const indexHTML = `<!doctype html>
       $("listenAddr").value = config.listen_addr || "0.0.0.0:8080";
       $("timeoutSeconds").value = config.timeout_seconds || 120;
       $("loopCount").value = config.loop_count || 1;
+      $("maxOutputChars").value = config.max_output_chars || 4000;
     }
     async function request(path, options = {}) {
       const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
@@ -327,6 +331,7 @@ const indexHTML = `<!doctype html>
       cfg.listen_addr = $("listenAddr").value.trim() || "0.0.0.0:8080";
       cfg.timeout_seconds = Number($("timeoutSeconds").value) || 120;
       cfg.loop_count = Number($("loopCount").value) || 1;
+      cfg.max_output_chars = Number($("maxOutputChars").value) || 4000;
       state.config = await request("/api/config", { method: "POST", body: JSON.stringify(cfg) });
       fillForm(state.config);
       setMessage("Runtime saved.");
