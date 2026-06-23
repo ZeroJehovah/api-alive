@@ -19,7 +19,6 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`class="panel log-panel"`,
 		`<table class="log-table">`,
 		`<tbody id="logList"></tbody>`,
-		`id="runningModels"`,
 		`maxLogEntries = 100`,
 		`text-overflow: ellipsis`,
 		`.log-model-col { width: 30ch; }`,
@@ -31,6 +30,8 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`async function stopProbe`,
 		`id="stopProbeBtn"`,
 		`class="live-dot"`,
+		`blue-breathe`,
+		`<span class="pill run"><span class="live-dot"></span>Running</span>`,
 		`id="editModelsBtn"`,
 		`id="cancelEditBtn"`,
 		`id="selectAllLabel"`,
@@ -133,20 +134,23 @@ func TestConfigEndpointPreservesModelOrder(t *testing.T) {
 
 func TestProbeTaskLifecyclePersistsStateAndRejectsConcurrentStart(t *testing.T) {
 	store := &taskStore{}
-	task, ctx, err := store.start([]string{"model-a", "model-b"})
+	task, ctx, err := store.start([]string{"model-a", "model-b"}, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !task.Running || task.ID == 0 || len(task.RunningModels) != 2 {
 		t.Fatalf("started task = %#v", task)
 	}
-	if _, _, err := store.start([]string{"model-c"}); err == nil {
+	if len(task.Results) != 2 || task.Results[0].Attempts != 1 || task.Results[1].Attempts != 1 {
+		t.Fatalf("initial results = %#v", task.Results)
+	}
+	if _, _, err := store.start([]string{"model-c"}, 2); err == nil {
 		t.Fatal("second start succeeded while task was running")
 	}
 	store.applyEvent(task.ID, alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}})
 	store.applyEvent(task.ID, alive.Event{Type: alive.EventResult, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10, AttemptResults: []alive.Result{{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}}}})
 	snap := store.snapshot()
-	if !snap.Running || len(snap.Logs) != 1 || len(snap.Results) != 1 || snap.Results[0].Model != "model-a" {
+	if !snap.Running || len(snap.Logs) != 1 || resultByModel(snap.Results, "model-a").Model != "model-a" {
 		t.Fatalf("snapshot after event = %#v", snap)
 	}
 	if len(snap.RunningModels) != 1 || snap.RunningModels[0] != "model-b" {
@@ -168,21 +172,37 @@ func TestProbeTaskLifecyclePersistsStateAndRejectsConcurrentStart(t *testing.T) 
 	if store.snapshot().Running {
 		t.Fatal("task still running after finish")
 	}
-	if _, _, err := store.start([]string{"model-c"}); err != nil {
+	if _, _, err := store.start([]string{"model-c"}, 2); err != nil {
 		t.Fatalf("start after finish failed: %v", err)
+	}
+}
+
+func TestProbeTaskAttemptEventsUpdateDisplayedAttempt(t *testing.T) {
+	store := &taskStore{}
+	task, _, err := store.start([]string{"model-a"}, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.applyEvent(task.ID, alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 1, Success: false, DurationMS: 10}})
+	if got := resultByModel(store.snapshot().Results, "model-a").Attempts; got != 2 {
+		t.Fatalf("attempt after first failure = %d, want 2", got)
+	}
+	store.applyEvent(task.ID, alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 3, Success: false, DurationMS: 30}})
+	if got := resultByModel(store.snapshot().Results, "model-a").Attempts; got != 3 {
+		t.Fatalf("attempt after final failure = %d, want 3", got)
 	}
 }
 
 func TestProbeTaskStartKeepsPreviousLogs(t *testing.T) {
 	store := &taskStore{}
-	first, _, err := store.start([]string{"model-a"})
+	first, _, err := store.start([]string{"model-a"}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	store.applyEvent(first.ID, alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}})
 	store.finish(first.ID)
 
-	second, _, err := store.start([]string{"model-b"})
+	second, _, err := store.start([]string{"model-b"}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,4 +271,13 @@ func assertConfigModels(t *testing.T, path string, want []string) {
 	if !reflect.DeepEqual(cfg.Models, want) {
 		t.Fatalf("models = %#v, want %#v", cfg.Models, want)
 	}
+}
+
+func resultByModel(results []alive.Result, model string) alive.Result {
+	for _, res := range results {
+		if res.Model == model {
+			return res
+		}
+	}
+	return alive.Result{}
 }
