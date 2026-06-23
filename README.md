@@ -10,6 +10,12 @@ The default provider is Codex CLI. A Claude Code adapter is present so provider-
 go build -o bin/api-alive ./cmd/api-alive
 ```
 
+Build the Windows GUI executable from WSL/Linux:
+
+```sh
+GOOS=windows GOARCH=amd64 go build -o dist/api-alive-gui.exe ./cmd/api-alive-gui
+```
+
 ## Usage
 
 By default, `api-alive` reads `config.json` from the current directory.
@@ -36,6 +42,12 @@ Use a JSON config file:
 
 ```sh
 go run ./cmd/api-alive --config config.example.json
+```
+
+Run probes through Codex installed inside a configured WSL distribution:
+
+```sh
+go run ./cmd/api-alive --provider codex-wsl --wsl-distro Ubuntu --models gpt-5
 ```
 
 List models from the current `config.json`:
@@ -82,21 +94,42 @@ List the 100 built-in prompt cases:
 go run ./cmd/api-alive --list-prompts
 ```
 
+## Windows GUI
+
+`api-alive-gui.exe` is a standalone Windows program built with Go. It starts a local dashboard in the default browser and uses `wsl.exe` to run Codex inside the selected WSL distribution.
+
+The dashboard supports:
+
+- selecting or typing the WSL distribution;
+- listing configured models from `config.json`;
+- adding and deleting models;
+- running one model from its row;
+- selecting multiple models or all models and running them together;
+- showing success, failure, duration, attempts, and error output.
+
+The GUI stores settings in the `config.json` next to the executable by default. Pass a config path as the first argument to use a different file:
+
+```sh
+api-alive-gui.exe C:\path\to\config.json
+```
+
 ## Config
 
 ```json
 {
-  "provider": "codex",
+  "provider": "codex-wsl",
   "models": ["gpt-5"],
   "timeout_seconds": 120,
   "loop_count": 1,
   "codex_command": "codex",
   "claude_command": "claude",
+  "wsl_command": "wsl.exe",
+  "wsl_distro": "Ubuntu",
   "max_output_chars": 4000
 }
 ```
 
-CLI flags override config values for `--models`, `--provider`, `--timeout`, and `--loops`.
+CLI flags override config values for `--models`, `--provider`, `--wsl-command`, `--wsl-distro`, `--timeout`, and `--loops`.
 
 The `list`, `add`, and `remove` commands use `config.json` by default. Pass `--config <path>` after the command to manage a different config file.
 

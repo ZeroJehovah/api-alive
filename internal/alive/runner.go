@@ -119,6 +119,9 @@ func (r Runner) runAttempt(parent context.Context, model string, prompt PromptCa
 	defer cancel()
 
 	cmd := shellForContext(ctx, command)
+	if direct, ok := r.Provider.(DirectCommandProvider); ok {
+		cmd = direct.CommandContext(ctx, model, prompt)
+	}
 	cmd.Dir = tmp
 	outputBytes, err := cmd.CombinedOutput()
 	output := string(outputBytes)

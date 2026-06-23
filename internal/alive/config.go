@@ -16,6 +16,8 @@ type Config struct {
 	LoopCount      int      `json:"loop_count"`
 	CodexCommand   string   `json:"codex_command"`
 	ClaudeCommand  string   `json:"claude_command"`
+	WSLCommand     string   `json:"wsl_command"`
+	WSLDistro      string   `json:"wsl_distro"`
 	MaxOutputChars int      `json:"max_output_chars"`
 }
 
@@ -26,6 +28,7 @@ func DefaultConfig() Config {
 		LoopCount:      1,
 		CodexCommand:   "codex",
 		ClaudeCommand:  "claude",
+		WSLCommand:     "wsl.exe",
 		MaxOutputChars: 4000,
 	}
 }
@@ -72,6 +75,9 @@ func (c *Config) ApplyDefaults() {
 	if c.ClaudeCommand == "" {
 		c.ClaudeCommand = "claude"
 	}
+	if c.WSLCommand == "" {
+		c.WSLCommand = "wsl.exe"
+	}
 	if c.MaxOutputChars <= 0 {
 		c.MaxOutputChars = 4000
 	}
@@ -87,7 +93,7 @@ func (c Config) Validate() error {
 		}
 	}
 	switch c.Provider {
-	case "codex", "claude":
+	case "codex", "codex-wsl", "claude":
 		return nil
 	default:
 		return fmt.Errorf("unsupported provider %q", c.Provider)

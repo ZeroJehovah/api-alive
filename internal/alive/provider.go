@@ -14,14 +14,30 @@ type Provider interface {
 	ShellCommand(model string, prompt PromptCase) string
 }
 
+type DirectCommandProvider interface {
+	CommandContext(ctx context.Context, model string, prompt PromptCase) *exec.Cmd
+}
+
 type CodexProvider struct{ Command string }
 
 type ClaudeProvider struct{ Command string }
+
+type CodexWSLProvider struct {
+	WSLCommand   string
+	Distribution string
+	CodexCommand string
+}
 
 func NewProvider(cfg Config) (Provider, error) {
 	switch cfg.Provider {
 	case "codex":
 		return CodexProvider{Command: cfg.CodexCommand}, nil
+	case "codex-wsl":
+		return CodexWSLProvider{
+			WSLCommand:   cfg.WSLCommand,
+			Distribution: strings.TrimSpace(cfg.WSLDistro),
+			CodexCommand: cfg.CodexCommand,
+		}, nil
 	case "claude":
 		return ClaudeProvider{Command: cfg.ClaudeCommand}, nil
 	default:
@@ -43,6 +59,62 @@ func (p CodexProvider) ShellCommand(model string, prompt PromptCase) string {
 	}, " ")
 }
 
+func (p CodexWSLProvider) Name() string { return "codex-wsl" }
+
+func (p CodexWSLProvider) ShellCommand(model string, prompt PromptCase) string {
+	parts := []string{shellQuote(p.wslCommand())}
+	for _, arg := range p.wslArgs(model, prompt) {
+		parts = append(parts, shellQuote(arg))
+	}
+	return strings.Join(parts, " ")
+}
+
+func (p CodexWSLProvider) CommandContext(ctx context.Context, model string, prompt PromptCase) *exec.Cmd {
+	return exec.CommandContext(ctx, p.wslCommand(), p.wslArgs(model, prompt)...)
+}
+
+func (p CodexWSLProvider) wslCommand() string {
+	command := strings.TrimSpace(p.WSLCommand)
+	if command == "" {
+		return "wsl.exe"
+	}
+	return command
+}
+
+func (p CodexWSLProvider) codexCommand() string {
+	command := strings.TrimSpace(p.CodexCommand)
+	if command == "" {
+		return "codex"
+	}
+	return command
+}
+
+func (p CodexWSLProvider) wslArgs(model string, prompt PromptCase) []string {
+	args := make([]string, 0, 7)
+	if distro := strings.TrimSpace(p.Distribution); distro != "" {
+		args = append(args, "-d", distro)
+	}
+	return append(args, "--", "sh", "-lc", p.wslScript(model, prompt))
+}
+
+func (p CodexWSLProvider) wslScript(model string, prompt PromptCase) string {
+	codexCommand := p.codexCommand()
+	codexArgs := strings.Join([]string{
+		posixShellQuote(codexCommand),
+		"exec",
+		"--model", posixShellQuote(model),
+		"--skip-git-repo-check",
+		"--ephemeral",
+		posixShellQuote(prompt.Input),
+	}, " ")
+	return strings.Join([]string{
+		"tmp=$(mktemp -d)",
+		`trap 'rm -rf "$tmp"' EXIT`,
+		`cd "$tmp"`,
+		"exec " + codexArgs,
+	}, "; ")
+}
+
 func (p ClaudeProvider) Name() string { return "claude" }
 
 func (p ClaudeProvider) ShellCommand(model string, prompt PromptCase) string {
@@ -59,6 +131,10 @@ func shellQuote(s string) string {
 	if runtime.GOOS == "windows" {
 		return strconv.Quote(s)
 	}
+	return posixShellQuote(s)
+}
+
+func posixShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 

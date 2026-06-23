@@ -5,5 +5,7 @@
   "loop_count": 1,
   "codex_command": "codex",
   "claude_command": "claude",
+  "wsl_command": "wsl.exe",
+  "wsl_distro": "",
   "max_output_chars": 4000
 }
