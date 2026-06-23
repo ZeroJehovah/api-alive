@@ -14,7 +14,7 @@ import (
 	"sort"
 	"strings"
 
-	"test-api-alive/internal/alive"
+	"api-alive/internal/alive"
 )
 
 const defaultConfigPath = "config.json"

@@ -1,50 +1,50 @@
-# test-api-alive
+# api-alive
 
-`test-api-alive` is a VPS-hosted Web dashboard for probing Codex model availability. It runs on Ubuntu, calls the local `codex` command, and probes one or more configured model names in parallel.
+`api-alive` 是一个部署在 VPS 上的 Codex 模型测活 Web 服务。它运行在 Ubuntu 上，调用本机安装的 `codex` 命令，并行探测一个或多个配置模型的可用性。
 
-The current target deployment is an ARM Ubuntu 24 VPS with Codex already installed.
+当前目标部署环境是 ARM CPU 的 Ubuntu 24 VPS，并假设 VPS 上已经安装且可直接执行 `codex`。
 
-## Build
+## 构建
 
-Build on the VPS:
+在 VPS 上直接构建：
 
 ```sh
 go build -o bin/api-alive ./cmd/api-alive
 ```
 
-Cross-build a Linux ARM64 binary from another machine:
+从其他机器交叉构建 Linux ARM64 二进制：
 
 ```sh
 GOOS=linux GOARCH=arm64 go build -o dist/api-alive-linux-arm64 ./cmd/api-alive
 ```
 
-## Run
+## 运行
 
-Create or edit `config.json`, then start the server:
+创建或编辑 `config.json` 后启动服务：
 
 ```sh
 ./bin/api-alive --config config.json
 ```
 
-Open the dashboard:
+打开 Web 页面：
 
 ```text
 http://<vps-ip>:8080
 ```
 
-By default the server listens on `0.0.0.0:8080`. Put it behind a firewall, reverse proxy, or access control before exposing it to the public Internet.
+默认监听地址是 `0.0.0.0:8080`。如果对公网开放，建议先通过防火墙、反向代理或访问控制限制入口。
 
-## Dashboard
+## Web 页面能力
 
-The Web UI supports:
+- 查看和保存运行参数。
+- 添加、删除模型名。
+- 选择单个或多个模型。
+- 对单个模型或选中的多个模型执行测活。
+- 展示成功、失败、耗时、尝试次数和错误输出。
 
-- viewing and editing runtime settings;
-- adding and deleting configured model names;
-- selecting one or more models;
-- running a probe for one model or all selected models;
-- showing success, failure, duration, attempts, and captured error output.
+## 配置
 
-## Config
+示例：
 
 ```json
 {
@@ -57,21 +57,23 @@ The Web UI supports:
 }
 ```
 
-Fields:
+字段说明：
 
-- `models`: model names shown in the dashboard and used for selected probes.
-- `timeout_seconds`: per-attempt timeout for each model.
-- `loop_count`: maximum attempts per model; a model stops after the first successful attempt.
-- `codex_command`: command used to invoke Codex on the VPS.
-- `listen_addr`: HTTP listen address for the Web service.
-- `max_output_chars`: maximum captured output returned per probe result.
+- `models`：Web 页面展示和测活时可选择的模型名。
+- `timeout_seconds`：单次尝试的超时时间。
+- `loop_count`：每个模型的最大尝试次数；任一尝试成功后立即停止该模型后续尝试。
+- `codex_command`：VPS 上用于调用 Codex 的命令。
+- `listen_addr`：Web 服务监听地址。
+- `max_output_chars`：单个测活结果最多返回的输出字符数。
 
-## Probe Behavior
+## 测活逻辑
 
-Each selected model runs in its own temporary directory. The command shape is:
+每个被选中的模型都会在独立临时目录中运行。命令形态为：
 
 ```sh
 codex exec --model <model> --skip-git-repo-check --ephemeral <prompt>
 ```
 
-A probe succeeds only when Codex exits successfully and the captured output contains the expected short answer for the selected built-in prompt. Failures include command errors, timeouts, and expected-output mismatches. Command failure messages prefer the last captured `ERROR:` line, then the last output line, then the process error.
+只有当 Codex 命令成功退出，并且输出中包含所选内置短提示语的预期答案时，测活才算成功。
+
+失败包括命令执行失败、超时和输出不符合预期。命令执行失败时，错误信息优先取 Codex 输出里的最后一条 `ERROR:` 行，其次取最后一行输出，最后才使用进程错误。

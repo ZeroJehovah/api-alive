@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"test-api-alive/internal/alive"
+	"api-alive/internal/alive"
 )
 
 func TestStateCreatesDefaultConfig(t *testing.T) {
