@@ -29,12 +29,13 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`async function stopProbe`,
 		`id="stopProbeBtn"`,
 		`class="live-dot"`,
-		`id="orderModeBtn"`,
-		`ordering: false`,
-		`Done ordering`,
-		`state.ordering ? '<th class="order">Order</th>' : ''`,
+		`id="editModelsBtn"`,
+		`editing: false`,
+		`draftModels: []`,
+		`state.editing ? '<th class="order">Order</th>' : ''`,
 		`data-move="up"`,
 		`data-move="down"`,
+		`async function toggleModelEdit`,
 		`async function moveModel`,
 	} {
 		if !strings.Contains(indexHTML, want) {
