@@ -155,19 +155,88 @@ const indexHTML = `<!doctype html>
       background: #fbfcfe;
     }
     .log-panel { margin-top: 18px; }
-    .log {
-      min-height: 110px;
-      max-height: 240px;
-      overflow: auto;
-      white-space: pre;
-      overflow-wrap: normal;
-      background: #111827;
-      color: #e5e7eb;
-      border-radius: 8px;
-      padding: 12px;
+    .log-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .running-models {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .running-model {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      max-width: 240px;
+      padding: 3px 8px;
+      border: 1px solid rgba(6, 118, 71, .28);
+      border-radius: 999px;
+      background: rgba(6, 118, 71, .07);
+      color: var(--ok);
+      font-size: 12px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .running-model span:last-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #12b76a;
+      box-shadow: 0 0 0 0 rgba(18, 183, 106, .55);
+      animation: breathe 1.4s ease-in-out infinite;
+      flex: 0 0 auto;
+    }
+    @keyframes breathe {
+      0%, 100% { transform: scale(.82); box-shadow: 0 0 0 0 rgba(18, 183, 106, .45); opacity: .75; }
+      50% { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(18, 183, 106, 0); opacity: 1; }
+    }
+    .log-list {
+      display: grid;
+      gap: 8px;
+      max-height: 340px;
+      overflow: auto;
+      margin: 0;
+      padding: 0 4px 0 0;
+      list-style: none;
+    }
+    .log-empty {
+      padding: 22px 12px;
+      text-align: center;
+      color: var(--muted);
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+      font-size: 13px;
+    }
+    .log-entry {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 10px;
+      align-items: start;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
       font-size: 12px;
     }
+    .log-entry.ok { border-color: rgba(6, 118, 71, .24); background: rgba(6, 118, 71, .045); }
+    .log-entry.bad { border-color: rgba(180, 35, 24, .22); background: rgba(180, 35, 24, .045); }
+    .log-icon { line-height: 1.7; }
+    .log-main { min-width: 0; display: grid; gap: 4px; }
+    .log-meta { display: flex; flex-wrap: wrap; gap: 8px; color: var(--muted); }
+    .log-model { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text); overflow-wrap: anywhere; }
+    .log-error { color: var(--danger); overflow-wrap: anywhere; }
+    .log-time { color: var(--muted); white-space: nowrap; }
     @media (max-width: 860px) {
       .app { padding: 16px; }
       .top { display: grid; }
@@ -245,15 +314,21 @@ const indexHTML = `<!doctype html>
     </section>
 
     <section class="panel log-panel">
-      <header><h2>Log</h2></header>
+      <header>
+        <div class="log-title">
+          <h2>Log</h2>
+          <div class="running-models" id="runningModels"></div>
+        </div>
+      </header>
       <div class="body">
-        <div class="log" id="log">Ready.</div>
+        <ul class="log-list" id="logList"></ul>
       </div>
     </section>
   </main>
 
   <script>
-    const state = { config: null, selected: new Set(), results: new Map(), running: false };
+    const state = { config: null, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [] };
+    const maxLogEntries = 100;
     const $ = (id) => document.getElementById(id);
     function setMessage(text) { $("message").textContent = text; }
     function resultFor(model) { return state.results.get(model) || null; }
@@ -268,6 +343,44 @@ const indexHTML = `<!doctype html>
       document.querySelectorAll("[data-move]").forEach(btn => {
         btn.disabled = value || btn.dataset.boundary === "true";
       });
+      renderRunningModels();
+    }
+    function renderRunningModels() {
+      const host = $("runningModels");
+      const models = [...state.runningModels];
+      host.innerHTML = models.map(model => "<span class=\"running-model\" title=\"" + escapeText(model) + "\"><span class=\"live-dot\"></span><span>" + escapeText(model) + "</span></span>").join("");
+    }
+    function renderLog() {
+      const host = $("logList");
+      if (!state.logEntries.length) {
+        host.innerHTML = "<li class=\"log-empty\">Ready.</li>";
+        return;
+      }
+      host.innerHTML = state.logEntries.map(entry => {
+        const status = entry.success ? "success" : "failed";
+        const cls = entry.success ? "ok" : "bad";
+        const icon = entry.success ? "✅" : "❌";
+        const error = entry.success ? "" : "<div class=\"log-error\">error=" + escapeText(entry.error || "unknown error") + "</div>";
+        return "<li class=\"log-entry " + cls + "\">" +
+          "<div class=\"log-icon\">" + icon + "</div>" +
+          "<div class=\"log-main\">" +
+            "<div><strong>" + status + "</strong> <span class=\"log-model\">" + escapeText(entry.model) + "</span></div>" +
+            "<div class=\"log-meta\"><span>attempt=" + escapeText(entry.attempts) + "</span><span>seconds=" + escapeText((entry.duration_ms / 1000).toFixed(3)) + "</span></div>" +
+            error +
+          "</div>" +
+          "<time class=\"log-time\">" + escapeText(entry.time) + "</time>" +
+        "</li>";
+      }).join("");
+    }
+    function addLogEntries(results) {
+      const now = new Date().toLocaleTimeString();
+      const entries = [];
+      for (const res of results || []) {
+        const attempts = res.attempt_results && res.attempt_results.length ? res.attempt_results : [res];
+        for (const attempt of attempts) entries.push({ ...attempt, time: now });
+      }
+      state.logEntries = entries.reverse().concat(state.logEntries).slice(0, maxLogEntries);
+      renderLog();
     }
     function updateSelectedCount() {
       $("selectedCount").textContent = state.selected.size + " selected";
@@ -341,6 +454,33 @@ const indexHTML = `<!doctype html>
       if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
       return data;
     }
+    async function requestProbeStream(models, onEvent) {
+      const res = await fetch("/api/probe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ models, stream: true })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || ("HTTP " + res.status));
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed) onEvent(JSON.parse(trimmed));
+        }
+      }
+      buffer += decoder.decode();
+      if (buffer.trim()) onEvent(JSON.parse(buffer.trim()));
+    }
     async function loadState() {
       setMessage("Loading...");
       const data = await request("/api/state");
@@ -393,23 +533,38 @@ const indexHTML = `<!doctype html>
       models = [...new Set(models)].filter(Boolean);
       if (!models.length) return;
       models.forEach(model => state.results.set(model, { running: true }));
-      $("log").textContent = "Running " + models.length + " model(s)...";
+      state.runningModels = new Set(models);
       renderModels();
       setBusy(true);
+      let completed = 0;
+      let failed = 0;
       try {
-        const data = await request("/api/probe", { method: "POST", body: JSON.stringify({ models }) });
-        for (const res of data.results || []) state.results.set(res.model, res);
-        const failed = (data.results || []).filter(res => !res.success).length;
-        $("log").textContent = (data.results || []).map(res => {
-          const status = res.success ? "success" : "failed error=" + (res.error || "");
-          return res.model + " " + status + " attempts=" + res.attempts + " seconds=" + (res.duration_ms / 1000).toFixed(3);
-        }).join("\n") || "No results.";
+        await requestProbeStream(models, event => {
+          const res = event.result;
+          if (!res || !res.model) return;
+          if (event.type === "attempt") {
+            addLogEntries([res]);
+            return;
+          }
+          if (event.type === "result") {
+            completed++;
+            if (!res.success) failed++;
+            if (!res.attempt_results || !res.attempt_results.length) addLogEntries([res]);
+            state.results.set(res.model, res);
+            state.runningModels.delete(res.model);
+            renderRunningModels();
+            renderModels();
+            setMessage("Completed " + completed + "/" + models.length + " model(s).");
+          }
+        });
         setMessage(failed ? failed + " model(s) failed." : "All selected probes succeeded.");
       } catch (err) {
-        $("log").textContent = err.message;
-        models.forEach(model => state.results.set(model, { success: false, attempts: 0, duration_ms: 0, error: err.message }));
+        const failedResults = [...state.runningModels].map(model => ({ model, success: false, attempts: 0, duration_ms: 0, error: err.message }));
+        failedResults.forEach(res => state.results.set(res.model, res));
+        addLogEntries(failedResults);
         setMessage("Probe failed.");
       } finally {
+        state.runningModels = new Set();
         setBusy(false);
         renderModels();
       }
@@ -427,6 +582,8 @@ const indexHTML = `<!doctype html>
     });
     $("runSelectedBtn").addEventListener("click", () => runModels([...state.selected]));
     $("deleteSelectedBtn").addEventListener("click", () => deleteSelected().catch(err => setMessage(err.message)));
+    renderLog();
+    renderRunningModels();
     loadState().catch(err => setMessage(err.message));
   </script>
 </body>
