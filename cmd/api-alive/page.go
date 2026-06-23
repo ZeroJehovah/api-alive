@@ -119,8 +119,14 @@ const indexHTML = `<!doctype html>
       padding: 0 10px;
       font-size: 12px;
     }
+    .select-all-label { display: flex; align-items: center; gap: 8px; color: var(--text); }
     .add-form { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 8px; margin-bottom: 12px; }
-    .add-form[hidden], button[hidden], label[hidden] { display: none; }
+    .add-form input, .add-form button {
+      min-height: 30px;
+      padding: 0 10px;
+      font-size: 12px;
+    }
+    .add-form[hidden], button[hidden], label[hidden] { display: none !important; }
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     th, td {
       padding: 6px 8px;
@@ -307,7 +313,7 @@ const indexHTML = `<!doctype html>
         </header>
         <div class="body">
           <div class="toolbar">
-            <label id="selectAllLabel" style="display:flex; align-items:center; gap:8px; color:var(--text);">
+            <label class="select-all-label" id="selectAllLabel">
               <input id="selectAll" type="checkbox" style="width:16px; min-height:16px;"> Select all
             </label>
             <div class="actions">
