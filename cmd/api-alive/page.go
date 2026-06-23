@@ -220,9 +220,9 @@ const indexHTML = `<!doctype html>
     }
     .log-entry {
       display: grid;
-      grid-template-columns: auto 1fr auto;
+      grid-template-columns: auto minmax(0, 1fr) auto;
       gap: 10px;
-      align-items: start;
+      align-items: center;
       padding: 10px 12px;
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -231,11 +231,11 @@ const indexHTML = `<!doctype html>
     }
     .log-entry.ok { border-color: rgba(6, 118, 71, .24); background: rgba(6, 118, 71, .045); }
     .log-entry.bad { border-color: rgba(180, 35, 24, .22); background: rgba(180, 35, 24, .045); }
-    .log-icon { line-height: 1.7; }
-    .log-main { min-width: 0; display: grid; gap: 4px; }
-    .log-meta { display: flex; flex-wrap: wrap; gap: 8px; color: var(--muted); }
-    .log-model { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text); overflow-wrap: anywhere; }
-    .log-error { color: var(--danger); overflow-wrap: anywhere; }
+    .log-icon { line-height: 1; }
+    .log-main { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .log-meta { color: var(--muted); }
+    .log-model { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text); }
+    .log-error { color: var(--danger); }
     .log-time { color: var(--muted); white-space: nowrap; }
     @media (max-width: 860px) {
       .app { padding: 16px; }
@@ -382,13 +382,17 @@ const indexHTML = `<!doctype html>
         const status = res.success ? 'success' : 'failed';
         const cls = res.success ? 'ok' : 'bad';
         const icon = res.success ? '✅' : '❌';
-        const error = res.success ? '' : '<div class="log-error">error=' + escapeText(res.error || 'unknown error') + '</div>';
-        return '<li class="log-entry ' + cls + '">' +
+        const seconds = ((res.duration_ms || 0) / 1000).toFixed(3);
+        const time = displayTime(entry.time);
+        const errorText = res.success ? '' : ' error=' + (res.error || 'unknown error');
+        const logTitle = status + ' model=' + (res.model || '') + ' attempt=' + (res.attempts ?? '') + ' seconds=' + seconds + ' time=' + time + errorText;
+        const error = res.success ? '' : ' <span class="log-error">error=' + escapeText(res.error || 'unknown error') + '</span>';
+        return '<li class="log-entry ' + cls + '" title="' + escapeText(logTitle) + '">' +
           '<div class="log-icon">' + icon + '</div>' +
           '<div class="log-main">' +
-            '<div><strong>' + status + '</strong> <span class="log-model">' + escapeText(res.model) + '</span></div>' +
-            '<div class="log-meta"><span>attempt=' + escapeText(res.attempts) + '</span><span>seconds=' + escapeText(((res.duration_ms || 0) / 1000).toFixed(3)) + '</span></div>' + error +
-          '</div><time class="log-time">' + escapeText(displayTime(entry.time)) + '</time></li>';
+            '<strong>' + status + '</strong> <span class="log-model">' + escapeText(res.model) + '</span> ' +
+            '<span class="log-meta">attempt=' + escapeText(res.attempts) + ' seconds=' + escapeText(seconds) + '</span>' + error +
+          '</div><time class="log-time">' + escapeText(time) + '</time></li>';
       }).join('');
     }
     function updateSelectedCount() {
