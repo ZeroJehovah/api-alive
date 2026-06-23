@@ -21,13 +21,16 @@ func TestPrintHumanAlignedPrintsOneSummaryLine(t *testing.T) {
 	}, len("longer-model"))
 
 	got := buf.String()
-	for _, expected := range []string{"❌", "gpt-5", "1.234s", "attempts=3", `error="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..."`} {
+	for _, expected := range []string{"❌", "gpt-5", "1.234s", "attempts=3", `error=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...`} {
 		if !strings.Contains(got, expected) {
 			t.Fatalf("output missing %q: %q", expected, got)
 		}
 	}
 	if !strings.Contains(got, `attempts=3  failed   error=`) {
 		t.Fatalf("failure status is not before error detail: %q", got)
+	}
+	if strings.Contains(got, `error="`) {
+		t.Fatalf("failure detail is quoted: %q", got)
 	}
 	if strings.Index(got, "failed") > strings.Index(got, "error=") {
 		t.Fatalf("failure detail appears before status: %q", got)
@@ -115,10 +118,13 @@ func TestPrintHumanAlignedKeepsProviderErrorDetail(t *testing.T) {
 	}, len("hotaruapi/gpt-5.5"))
 
 	got := buf.String()
-	if !strings.Contains(got, `error="ERROR: exceeded retry limit, last status: 429 Too Many Requests"`) {
+	if !strings.Contains(got, `error=ERROR: exceeded retry limit, last status: 429 Too Many Requests`) {
 		t.Fatalf("output missing provider error detail: %q", got)
 	}
-	if !strings.Contains(got, `failed   error="ERROR: exceeded retry limit, last status: 429 Too Many Requests"`) {
+	if !strings.Contains(got, `failed   error=ERROR: exceeded retry limit, last status: 429 Too Many Requests`) {
 		t.Fatalf("provider error detail is not after failed status: %q", got)
+	}
+	if strings.Contains(got, `error="`) {
+		t.Fatalf("provider error detail is quoted: %q", got)
 	}
 }

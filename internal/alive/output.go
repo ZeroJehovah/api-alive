@@ -23,7 +23,7 @@ func PrintHumanAligned(w io.Writer, res Result, modelWidth int) {
 		fmt.Fprintf(w, "%s %-*s  %8.3fs  attempts=%d  %-*s\n", resultEmoji(res), modelWidth, res.Model, durationSeconds(res), res.Attempts, humanStatusWidth, status)
 		return
 	}
-	fmt.Fprintf(w, "%s %-*s  %8.3fs  attempts=%d  %-*s  error=%q\n", resultEmoji(res), modelWidth, res.Model, durationSeconds(res), res.Attempts, humanStatusWidth, status, humanError(res.Error))
+	fmt.Fprintf(w, "%s %-*s  %8.3fs  attempts=%d  %-*s  error=%s\n", resultEmoji(res), modelWidth, res.Model, durationSeconds(res), res.Attempts, humanStatusWidth, status, humanError(res.Error))
 }
 
 func ModelColumnWidth(models []string) int {
