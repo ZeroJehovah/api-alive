@@ -9,18 +9,19 @@ import (
 )
 
 type Config struct {
-	Models         []string `json:"models"`
-	TimeoutSeconds int      `json:"timeout_seconds"`
-	LoopCount      int      `json:"loop_count"`
-	CodexCommand   string   `json:"codex_command"`
-	ListenAddr     string   `json:"listen_addr"`
-	MaxOutputChars int      `json:"max_output_chars"`
+	Models          []string       `json:"models"`
+	ModelLoopCounts map[string]int `json:"model_loop_counts,omitempty"`
+	TimeoutSeconds  int            `json:"timeout_seconds"`
+	// LoopCount is kept only for backward compatibility with older config files.
+	LoopCount      int    `json:"loop_count,omitempty"`
+	CodexCommand   string `json:"codex_command"`
+	ListenAddr     string `json:"listen_addr"`
+	MaxOutputChars int    `json:"max_output_chars"`
 }
 
 func DefaultConfig() Config {
 	return Config{
 		TimeoutSeconds: 120,
-		LoopCount:      1,
 		CodexCommand:   "codex",
 		ListenAddr:     "0.0.0.0:8080",
 		MaxOutputChars: 4000,
@@ -57,9 +58,6 @@ func (c *Config) ApplyDefaults() {
 	if c.TimeoutSeconds <= 0 {
 		c.TimeoutSeconds = 120
 	}
-	if c.LoopCount <= 0 {
-		c.LoopCount = 1
-	}
 	if c.CodexCommand == "" {
 		c.CodexCommand = "codex"
 	}
@@ -69,6 +67,9 @@ func (c *Config) ApplyDefaults() {
 	if c.MaxOutputChars <= 0 {
 		c.MaxOutputChars = 4000
 	}
+	c.Models = normalizeModels(c.Models)
+	c.ModelLoopCounts = normalizeModelLoopCounts(c.Models, c.ModelLoopCounts, c.LoopCount)
+	c.LoopCount = 0
 }
 
 func (c Config) Validate() error {
@@ -85,6 +86,18 @@ func (c Config) Validate() error {
 
 func (c Config) Timeout() time.Duration {
 	return time.Duration(c.TimeoutSeconds) * time.Second
+}
+
+func (c Config) LoopCountForModel(model string) int {
+	if c.ModelLoopCounts != nil {
+		if loopCount := c.ModelLoopCounts[model]; loopCount > 0 {
+			return loopCount
+		}
+	}
+	if c.LoopCount > 0 {
+		return c.LoopCount
+	}
+	return 1
 }
 
 func AddModels(existing, additions []string) []string {
@@ -143,4 +156,32 @@ func normalizeModels(models []string) []string {
 		seen[model] = struct{}{}
 	}
 	return out
+}
+
+func normalizeModelLoopCounts(models []string, counts map[string]int, legacyLoopCount int) map[string]int {
+	out := make(map[string]int, len(models))
+	defaultLoopCount := legacyLoopCount
+	if defaultLoopCount <= 0 {
+		defaultLoopCount = 1
+	}
+	for _, model := range models {
+		loopCount := defaultLoopCount
+		if counts != nil {
+			if configured := counts[model]; configured > 0 {
+				loopCount = configured
+			}
+		}
+		out[model] = clampLoopCount(loopCount)
+	}
+	return out
+}
+
+func clampLoopCount(loopCount int) int {
+	if loopCount < 1 {
+		return 1
+	}
+	if loopCount > 9999 {
+		return 9999
+	}
+	return loopCount
 }

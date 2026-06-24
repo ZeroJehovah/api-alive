@@ -52,6 +52,11 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`flex: 1 1 320px`,
 		`editing: false`,
 		`draftModels: []`,
+		`draftModelLoopCounts: {}`,
+		`function loopCountInput`,
+		`maxlength="4"`,
+		`.loop-count-input`,
+		`model_loop_counts`,
 		`<table class="model-table">`,
 		`<table class="model-table model-editor">`,
 		`.model-table .model-heading { width: 30ch; }`,
@@ -115,7 +120,7 @@ func TestModelsEndpointAddsAndDeletesModels(t *testing.T) {
 func TestConfigEndpointUpdatesRuntime(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	srv := newServer(configPath)
-	body := bytes.NewBufferString(`{"models":["gpt-5"],"timeout_seconds":30,"loop_count":2,"codex_command":"codex-beta","listen_addr":"127.0.0.1:0","max_output_chars":1234}`)
+	body := bytes.NewBufferString(`{"models":["gpt-5"],"model_loop_counts":{"gpt-5":2},"timeout_seconds":30,"codex_command":"codex-beta","listen_addr":"127.0.0.1:0","max_output_chars":1234}`)
 
 	rec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/config", body))
@@ -126,7 +131,7 @@ func TestConfigEndpointUpdatesRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.TimeoutSeconds != 30 || cfg.LoopCount != 2 || cfg.CodexCommand != "codex-beta" || cfg.ListenAddr != "127.0.0.1:0" || cfg.MaxOutputChars != 1234 {
+	if cfg.TimeoutSeconds != 30 || cfg.ModelLoopCounts["gpt-5"] != 2 || cfg.CodexCommand != "codex-beta" || cfg.ListenAddr != "127.0.0.1:0" || cfg.MaxOutputChars != 1234 {
 		t.Fatalf("unexpected config: %#v", cfg)
 	}
 }
@@ -134,7 +139,7 @@ func TestConfigEndpointUpdatesRuntime(t *testing.T) {
 func TestConfigEndpointPreservesModelOrder(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	srv := newServer(configPath)
-	body := bytes.NewBufferString(`{"models":["model-b","model-a","model-b","model-c"],"timeout_seconds":30,"loop_count":1,"codex_command":"codex","listen_addr":"127.0.0.1:0","max_output_chars":4000}`)
+	body := bytes.NewBufferString(`{"models":["model-b","model-a","model-b","model-c"],"model_loop_counts":{"model-b":2,"model-a":3,"model-c":4},"timeout_seconds":30,"codex_command":"codex","listen_addr":"127.0.0.1:0","max_output_chars":4000}`)
 
 	rec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/config", body))
@@ -146,7 +151,7 @@ func TestConfigEndpointPreservesModelOrder(t *testing.T) {
 
 func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *testing.T) {
 	store := &taskStore{}
-	task, ctx, err := store.start([]string{"model-a", "model-b"}, 2)
+	task, ctx, err := store.start([]string{"model-a", "model-b"}, map[string]int{"model-a": 2, "model-b": 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +161,7 @@ func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *tes
 	if len(task.Results) != 2 || task.Results[0].Attempts != 1 || task.Results[1].Attempts != 1 {
 		t.Fatalf("initial results = %#v", task.Results)
 	}
-	secondTask, secondCtx, err := store.start([]string{"model-c"}, 1)
+	secondTask, secondCtx, err := store.start([]string{"model-c"}, map[string]int{"model-c": 1})
 	if err != nil {
 		t.Fatalf("distinct concurrent start failed: %v", err)
 	}
@@ -166,7 +171,7 @@ func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *tes
 	if len(secondTask.RunningModels) != 3 {
 		t.Fatalf("running models after concurrent start = %#v", secondTask.RunningModels)
 	}
-	if _, _, err := store.start([]string{"model-b"}, 2); err == nil {
+	if _, _, err := store.start([]string{"model-b"}, map[string]int{"model-b": 2}); err == nil {
 		t.Fatal("duplicate concurrent start succeeded while model was running")
 	}
 	store.applyEvent(task.ID, alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}})
@@ -207,14 +212,14 @@ func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *tes
 	if store.snapshot().Running {
 		t.Fatal("task still running after all active runs finished")
 	}
-	if _, _, err := store.start([]string{"model-c"}, 2); err != nil {
+	if _, _, err := store.start([]string{"model-c"}, map[string]int{"model-c": 2}); err != nil {
 		t.Fatalf("start after finish failed: %v", err)
 	}
 }
 
 func TestProbeTaskAttemptEventsUpdateDisplayedAttempt(t *testing.T) {
 	store := &taskStore{}
-	task, _, err := store.start([]string{"model-a"}, 3)
+	task, _, err := store.start([]string{"model-a"}, map[string]int{"model-a": 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +235,7 @@ func TestProbeTaskAttemptEventsUpdateDisplayedAttempt(t *testing.T) {
 
 func TestProbeTaskStartKeepsPreviousLogsAndUnselectedResults(t *testing.T) {
 	store := &taskStore{}
-	first, _, err := store.start([]string{"model-a"}, 1)
+	first, _, err := store.start([]string{"model-a"}, map[string]int{"model-a": 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +243,7 @@ func TestProbeTaskStartKeepsPreviousLogsAndUnselectedResults(t *testing.T) {
 	store.applyEvent(first.ID, alive.Event{Type: alive.EventResult, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10, AttemptResults: []alive.Result{{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}}}})
 	store.finish(first.ID)
 
-	second, _, err := store.start([]string{"model-b"}, 1)
+	second, _, err := store.start([]string{"model-b"}, map[string]int{"model-b": 1})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -117,8 +117,9 @@ func (r Runner) runModelEvents(parent context.Context, model string, rng *rand.R
 	}
 	defer os.RemoveAll(tmp)
 
-	attemptResults := make([]Result, 0, r.Config.LoopCount)
-	for attempt := 1; attempt <= r.Config.LoopCount; attempt++ {
+	loopCount := r.Config.LoopCountForModel(model)
+	attemptResults := make([]Result, 0, loopCount)
+	for attempt := 1; attempt <= loopCount; attempt++ {
 		prompt := r.Prompts[rng.Intn(len(r.Prompts))]
 		res = r.runAttempt(parent, model, prompt, tmp, started, attempt)
 		attemptResults = append(attemptResults, res)

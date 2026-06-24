@@ -34,12 +34,12 @@ type appState struct {
 }
 
 type configRequest struct {
-	Models         []string `json:"models"`
-	TimeoutSeconds int      `json:"timeout_seconds"`
-	LoopCount      int      `json:"loop_count"`
-	CodexCommand   string   `json:"codex_command"`
-	MaxOutputChars int      `json:"max_output_chars"`
-	ListenAddr     string   `json:"listen_addr"`
+	Models          []string       `json:"models"`
+	ModelLoopCounts map[string]int `json:"model_loop_counts"`
+	TimeoutSeconds  int            `json:"timeout_seconds"`
+	CodexCommand    string         `json:"codex_command"`
+	MaxOutputChars  int            `json:"max_output_chars"`
+	ListenAddr      string         `json:"listen_addr"`
 }
 
 type modelsRequest struct {
@@ -47,12 +47,14 @@ type modelsRequest struct {
 }
 
 type probeRequest struct {
-	Models []string `json:"models"`
-	Stream bool     `json:"stream"`
+	Models          []string       `json:"models"`
+	ModelLoopCounts map[string]int `json:"model_loop_counts"`
+	Stream          bool           `json:"stream"`
 }
 
 type probeResponse struct {
-	Task probeTask `json:"task"`
+	Task   probeTask    `json:"task"`
+	Config alive.Config `json:"config,omitempty"`
 }
 
 type probeTask struct {
@@ -66,7 +68,6 @@ type probeTask struct {
 	StartedAt     string          `json:"started_at,omitempty"`
 	FinishedAt    string          `json:"finished_at,omitempty"`
 	Error         string          `json:"error,omitempty"`
-	LoopCount     int             `json:"-"`
 	LoopCounts    map[string]int  `json:"-"`
 }
 
@@ -170,8 +171,8 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg.Models = alive.AddModels(nil, req.Models)
+	cfg.ModelLoopCounts = req.ModelLoopCounts
 	cfg.TimeoutSeconds = req.TimeoutSeconds
-	cfg.LoopCount = req.LoopCount
 	cfg.CodexCommand = strings.TrimSpace(req.CodexCommand)
 	cfg.MaxOutputChars = req.MaxOutputChars
 	cfg.ListenAddr = strings.TrimSpace(req.ListenAddr)
@@ -244,20 +245,34 @@ func (s *server) handleProbe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	cfg.Models = models
+	for _, model := range models {
+		if cfg.ModelLoopCounts == nil {
+			cfg.ModelLoopCounts = make(map[string]int)
+		}
+		if count, ok := req.ModelLoopCounts[model]; ok {
+			cfg.ModelLoopCounts[model] = count
+		}
+	}
 	cfg.ApplyDefaults()
-	if err := cfg.Validate(); err != nil {
+	if err := alive.SaveConfig(s.configPath, cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	runnerCfg := cfg
+	runnerCfg.Models = models
+	runnerCfg.ApplyDefaults()
+	if err := runnerCfg.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	runner := alive.Runner{Config: cfg, Prompts: alive.DefaultPrompts}
-	task, ctx, err := s.tasks.start(models, cfg.LoopCount)
+	runner := alive.Runner{Config: runnerCfg, Prompts: alive.DefaultPrompts}
+	task, ctx, err := s.tasks.start(models, loopCountsForModels(models, runnerCfg.ModelLoopCounts))
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	go s.runProbeTask(ctx, task.ID, runner)
-	writeJSON(w, probeResponse{Task: task})
+	writeJSON(w, probeResponse{Task: task, Config: cfg})
 }
 
 func (s *server) handleStopProbe(w http.ResponseWriter, r *http.Request) {
@@ -305,7 +320,7 @@ func (s *server) streamProbe(w http.ResponseWriter, r *http.Request, runner aliv
 	}
 }
 
-func (ts *taskStore) start(models []string, loopCount int) (probeTask, context.Context, error) {
+func (ts *taskStore) start(models []string, loopCounts map[string]int) (probeTask, context.Context, error) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -328,7 +343,7 @@ func (ts *taskStore) start(models []string, loopCount int) (probeTask, context.C
 			ts.task.LoopCounts = make(map[string]int)
 		}
 		for _, model := range models {
-			ts.task.LoopCounts[model] = loopCount
+			ts.task.LoopCounts[model] = loopCounts[model]
 		}
 		ts.task.FinishedAt = ""
 		ts.task.Error = ""
@@ -352,8 +367,7 @@ func (ts *taskStore) start(models []string, loopCount int) (probeTask, context.C
 		StartedAt:     now,
 		Results:       results,
 		Logs:          logs,
-		LoopCount:     loopCount,
-		LoopCounts:    loopCountsFor(models, loopCount),
+		LoopCounts:    loopCountsForModels(models, loopCounts),
 	}
 	ts.cancels = []context.CancelFunc{cancel}
 	ts.activeRuns = 1
@@ -441,7 +455,7 @@ func (ts *taskStore) loopCountForModel(model string) int {
 			return loopCount
 		}
 	}
-	return ts.task.LoopCount
+	return 1
 }
 
 func (ts *taskStore) prependLogLocked(timestamp string, res alive.Result) {
@@ -465,9 +479,16 @@ func initialRunningResults(models []string) []alive.Result {
 	return results
 }
 
-func loopCountsFor(models []string, loopCount int) map[string]int {
+func loopCountsForModels(models []string, counts map[string]int) map[string]int {
 	loopCounts := make(map[string]int, len(models))
 	for _, model := range models {
+		loopCount := 1
+		if counts != nil && counts[model] > 0 {
+			loopCount = counts[model]
+		}
+		if loopCount > 9999 {
+			loopCount = 9999
+		}
 		loopCounts[model] = loopCount
 	}
 	return loopCounts

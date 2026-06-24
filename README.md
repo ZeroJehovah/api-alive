@@ -51,8 +51,8 @@ http://<vps-ip>:8080
 ```json
 {
   "models": ["gpt-5"],
+  "model_loop_counts": {"gpt-5": 1},
   "timeout_seconds": 120,
-  "loop_count": 1,
   "codex_command": "codex",
   "listen_addr": "0.0.0.0:8080",
   "max_output_chars": 4000
@@ -62,8 +62,8 @@ http://<vps-ip>:8080
 字段说明：
 
 - `models`：Web 页面展示和测活时可选择的模型名。
+- `model_loop_counts`：每个模型的最大尝试次数；新增模型默认是 1，可在 Models 面板修改；任一尝试成功后立即停止该模型后续尝试。
 - `timeout_seconds`：单次尝试的超时时间。
-- `loop_count`：每个模型的最大尝试次数；任一尝试成功后立即停止该模型后续尝试。
 - `codex_command`：VPS 上用于调用 Codex 的命令。
 - `listen_addr`：Web 服务监听地址。
 - `max_output_chars`：单个测活结果最多返回的输出字符数。
