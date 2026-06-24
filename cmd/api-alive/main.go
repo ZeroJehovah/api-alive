@@ -382,16 +382,17 @@ func (ts *taskStore) applyEvent(taskID int64, event alive.Event) {
 		return
 	}
 	res := event.Result
+	now := time.Now().Format(time.RFC3339)
 	if event.Type == alive.EventAttempt {
-		ts.task.Results = upsertResult(ts.task.Results, displayAttemptResult(res, ts.loopCountForModel(res.Model)))
-		ts.prependLogLocked(res)
+		ts.task.Results = upsertResult(ts.task.Results, timestampResult(displayAttemptResult(res, ts.loopCountForModel(res.Model)), now))
+		ts.prependLogLocked(now, res)
 		return
 	}
 	if event.Type == alive.EventResult {
-		ts.task.Results = upsertResult(ts.task.Results, res)
+		ts.task.Results = upsertResult(ts.task.Results, timestampResult(res, now))
 		ts.task.RunningModels = removeModelName(ts.task.RunningModels, res.Model)
 		if len(res.AttemptResults) == 0 {
-			ts.prependLogLocked(res)
+			ts.prependLogLocked(now, res)
 		}
 	}
 }
@@ -439,12 +440,17 @@ func (ts *taskStore) loopCountForModel(model string) int {
 	return ts.task.LoopCount
 }
 
-func (ts *taskStore) prependLogLocked(res alive.Result) {
-	entry := probeLogEntry{Time: time.Now().Format(time.RFC3339), Result: res}
+func (ts *taskStore) prependLogLocked(timestamp string, res alive.Result) {
+	entry := probeLogEntry{Time: timestamp, Result: res}
 	ts.task.Logs = append([]probeLogEntry{entry}, ts.task.Logs...)
 	if len(ts.task.Logs) > maxServerLogEntries {
 		ts.task.Logs = ts.task.Logs[:maxServerLogEntries]
 	}
+}
+
+func timestampResult(res alive.Result, timestamp string) alive.Result {
+	res.UpdatedAt = timestamp
+	return res
 }
 
 func initialRunningResults(models []string) []alive.Result {

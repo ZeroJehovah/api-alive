@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"api-alive/internal/alive"
 )
@@ -23,7 +24,10 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`text-overflow: ellipsis`,
 		`.log-model-col { width: 30ch; }`,
 		`<td class="log-error" title="' + escapeText(errorText) + '">`,
-		`<th>Status</th><th>Model</th><th>Try</th><th>Seconds</th><th>Time</th><th>Error</th>`,
+		`<th>Time</th><th>Status</th><th>Model</th><th>Try</th><th>Seconds</th><th>Error</th>`,
+		`function displayDateTime`,
+		`displayDateTime(res.updated_at)`,
+		`<th class="result-time">Result time</th>`,
 		`idlePollMS = 60000`,
 		`runningPollMS = 5000`,
 		`async function startProbe`,
@@ -50,7 +54,7 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`draftModels: []`,
 		`<table class="model-table">`,
 		`<table class="model-table model-editor">`,
-		`.model-table .model-heading { width: 34%; }`,
+		`.model-table .model-heading { width: 30ch; }`,
 		`.model-table input[type="checkbox"]`,
 		`data-move="up"`,
 		`data-move="down"`,
@@ -168,8 +172,12 @@ func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *tes
 	store.applyEvent(task.ID, alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}})
 	store.applyEvent(task.ID, alive.Event{Type: alive.EventResult, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10, AttemptResults: []alive.Result{{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}}}})
 	snap := store.snapshot()
-	if !snap.Running || len(snap.Logs) != 1 || resultByModel(snap.Results, "model-a").Model != "model-a" {
+	modelAResult := resultByModel(snap.Results, "model-a")
+	if !snap.Running || len(snap.Logs) != 1 || modelAResult.Model != "model-a" {
 		t.Fatalf("snapshot after event = %#v", snap)
+	}
+	if _, err := time.Parse(time.RFC3339, modelAResult.UpdatedAt); err != nil {
+		t.Fatalf("updated_at = %q, parse error = %v", modelAResult.UpdatedAt, err)
 	}
 	if !reflect.DeepEqual(snap.RunningModels, []string{"model-b", "model-c"}) {
 		t.Fatalf("running models = %#v", snap.RunningModels)
