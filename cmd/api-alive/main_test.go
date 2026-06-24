@@ -32,8 +32,8 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`runningPollMS = 5000`,
 		`async function startProbe`,
 		`function runnableSelectedModels`,
-		`!state.runningModels.has(model)`,
-		`state.runningModels.has(btn.dataset.runOne)`,
+		`return [...state.selected].filter(model => model);`,
+		`btn.disabled = state.editing || state.task?.stopping`,
 		`async function stopProbe`,
 		`id="stopProbeBtn"`,
 		`class="header-actions"`,
@@ -155,7 +155,7 @@ func TestConfigEndpointPreservesModelOrder(t *testing.T) {
 
 func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *testing.T) {
 	store := &taskStore{}
-	task, ctx, err := store.start([]string{"model-a", "model-b"}, map[string]int{"model-a": 2, "model-b": 2})
+	task, runs, err := store.start([]string{"model-a", "model-b"}, map[string]int{"model-a": 2, "model-b": 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,8 @@ func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *tes
 	if len(task.Results) != 2 || task.Results[0].Attempts != 1 || task.Results[1].Attempts != 1 {
 		t.Fatalf("initial results = %#v", task.Results)
 	}
-	secondTask, secondCtx, err := store.start([]string{"model-c"}, map[string]int{"model-c": 1})
+	ctx := runCtxByModel(t, runs, "model-b")
+	secondTask, secondRuns, err := store.start([]string{"model-c"}, map[string]int{"model-c": 1})
 	if err != nil {
 		t.Fatalf("distinct concurrent start failed: %v", err)
 	}
@@ -175,11 +176,27 @@ func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *tes
 	if len(secondTask.RunningModels) != 3 {
 		t.Fatalf("running models after concurrent start = %#v", secondTask.RunningModels)
 	}
-	if _, _, err := store.start([]string{"model-b"}, map[string]int{"model-b": 2}); err == nil {
-		t.Fatal("duplicate concurrent start succeeded while model was running")
+	modelBFirstCtx := runCtxByModel(t, runs, "model-b")
+	restartedTask, restartedRuns, err := store.start([]string{"model-b"}, map[string]int{"model-b": 2})
+	if err != nil {
+		t.Fatalf("restart running model failed: %v", err)
 	}
-	store.applyEvent(task.ID, alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}})
-	store.applyEvent(task.ID, alive.Event{Type: alive.EventResult, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10, AttemptResults: []alive.Result{{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}}}})
+	if got := resultByModel(restartedTask.Results, "model-b").Attempts; got != 1 {
+		t.Fatalf("restarted model attempts = %d, want 1", got)
+	}
+	select {
+	case <-modelBFirstCtx:
+	default:
+		t.Fatal("restart did not cancel previous model-b context")
+	}
+	store.applyEvent(task.ID, runIDByModel(t, runs, "model-b"), alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-b", Attempts: 20, Success: false, DurationMS: 200}})
+	if got := resultByModel(store.snapshot().Results, "model-b").Attempts; got != 1 {
+		t.Fatalf("stale model-b event changed attempts to %d, want 1", got)
+	}
+	runs = append(runs, restartedRuns...)
+	store.applyEvent(task.ID, runIDByModel(t, runs, "model-a"), alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}})
+	store.applyEvent(task.ID, runIDByModel(t, runs, "model-a"), alive.Event{Type: alive.EventResult, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10, AttemptResults: []alive.Result{{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}}}})
+	store.finishRun(task.ID, runIDByModel(t, runs, "model-a"), "model-a")
 	snap := store.snapshot()
 	modelAResult := resultByModel(snap.Results, "model-a")
 	if !snap.Running || len(snap.Logs) != 1 || modelAResult.Model != "model-a" {
@@ -199,20 +216,20 @@ func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *tes
 		t.Fatalf("stop did not mark stopping: %#v", stopping)
 	}
 	select {
-	case <-ctx.Done():
+	case <-ctx:
 	default:
 		t.Fatal("stop did not cancel first task context")
 	}
 	select {
-	case <-secondCtx.Done():
+	case <-runCtxByModel(t, secondRuns, "model-c"):
 	default:
 		t.Fatal("stop did not cancel second task context")
 	}
-	store.finish(task.ID)
+	store.finishRun(task.ID, runIDByModel(t, runs, "model-b"), "model-b")
 	if !store.snapshot().Running {
 		t.Fatal("task stopped before all active runs finished")
 	}
-	store.finish(secondTask.ID)
+	store.finishRun(secondTask.ID, runIDByModel(t, secondRuns, "model-c"), "model-c")
 	if store.snapshot().Running {
 		t.Fatal("task still running after all active runs finished")
 	}
@@ -223,15 +240,15 @@ func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *tes
 
 func TestProbeTaskAttemptEventsUpdateDisplayedAttempt(t *testing.T) {
 	store := &taskStore{}
-	task, _, err := store.start([]string{"model-a"}, map[string]int{"model-a": 3})
+	task, runs, err := store.start([]string{"model-a"}, map[string]int{"model-a": 3})
 	if err != nil {
 		t.Fatal(err)
 	}
-	store.applyEvent(task.ID, alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 1, Success: false, DurationMS: 10}})
+	store.applyEvent(task.ID, runIDByModel(t, runs, "model-a"), alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 1, Success: false, DurationMS: 10}})
 	if got := resultByModel(store.snapshot().Results, "model-a").Attempts; got != 2 {
 		t.Fatalf("attempt after first failure = %d, want 2", got)
 	}
-	store.applyEvent(task.ID, alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 3, Success: false, DurationMS: 30}})
+	store.applyEvent(task.ID, runIDByModel(t, runs, "model-a"), alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 3, Success: false, DurationMS: 30}})
 	if got := resultByModel(store.snapshot().Results, "model-a").Attempts; got != 3 {
 		t.Fatalf("attempt after final failure = %d, want 3", got)
 	}
@@ -239,15 +256,15 @@ func TestProbeTaskAttemptEventsUpdateDisplayedAttempt(t *testing.T) {
 
 func TestProbeTaskStartKeepsPreviousLogsAndUnselectedResults(t *testing.T) {
 	store := &taskStore{}
-	first, _, err := store.start([]string{"model-a"}, map[string]int{"model-a": 1})
+	first, firstRuns, err := store.start([]string{"model-a"}, map[string]int{"model-a": 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	store.applyEvent(first.ID, alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}})
-	store.applyEvent(first.ID, alive.Event{Type: alive.EventResult, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10, AttemptResults: []alive.Result{{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}}}})
-	store.finish(first.ID)
+	store.applyEvent(first.ID, runIDByModel(t, firstRuns, "model-a"), alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}})
+	store.applyEvent(first.ID, runIDByModel(t, firstRuns, "model-a"), alive.Event{Type: alive.EventResult, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10, AttemptResults: []alive.Result{{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}}}})
+	store.finishRun(first.ID, runIDByModel(t, firstRuns, "model-a"), "model-a")
 
-	second, _, err := store.start([]string{"model-b"}, map[string]int{"model-b": 1})
+	second, secondRuns, err := store.start([]string{"model-b"}, map[string]int{"model-b": 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +281,7 @@ func TestProbeTaskStartKeepsPreviousLogsAndUnselectedResults(t *testing.T) {
 		t.Fatalf("selected model did not get initial running result: %#v", snap.Results)
 	}
 
-	store.applyEvent(second.ID, alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-b", Attempts: 1, Success: false, DurationMS: 20}})
+	store.applyEvent(second.ID, runIDByModel(t, secondRuns, "model-b"), alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-b", Attempts: 1, Success: false, DurationMS: 20}})
 	snap = store.snapshot()
 	if len(snap.Logs) != 2 || snap.Logs[0].Result.Model != "model-b" || snap.Logs[1].Result.Model != "model-a" {
 		t.Fatalf("logs after second event = %#v", snap.Logs)
@@ -300,8 +317,15 @@ func TestProbeEndpointAllowsDistinctConcurrentRequestsRejectsDuplicateAndStops(t
 	body = strings.NewReader(`{"models":["model-a"]}`)
 	rec = httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/probe", body))
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("duplicate concurrent probe status = %d, want 409; body = %q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("duplicate restart probe status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+	}
+	var restarted probeResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &restarted); err != nil {
+		t.Fatal(err)
+	}
+	if got := resultByModel(restarted.Task.Results, "model-a").Attempts; got != 1 {
+		t.Fatalf("restarted model attempts = %d, want 1", got)
 	}
 	rec = httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/probe/stop", strings.NewReader(`{}`)))
@@ -330,6 +354,28 @@ func assertConfigModels(t *testing.T, path string, want []string) {
 	if !reflect.DeepEqual(cfg.Models, want) {
 		t.Fatalf("models = %#v, want %#v", cfg.Models, want)
 	}
+}
+
+func runIDByModel(t *testing.T, runs []modelRun, model string) int64 {
+	t.Helper()
+	for i := len(runs) - 1; i >= 0; i-- {
+		if runs[i].Model == model {
+			return runs[i].ID
+		}
+	}
+	t.Fatalf("run for model %s not found in %#v", model, runs)
+	return 0
+}
+
+func runCtxByModel(t *testing.T, runs []modelRun, model string) <-chan struct{} {
+	t.Helper()
+	for i := len(runs) - 1; i >= 0; i-- {
+		if runs[i].Model == model {
+			return runs[i].Ctx.Done()
+		}
+	}
+	t.Fatalf("run for model %s not found in %#v", model, runs)
+	return nil
 }
 
 func resultByModel(results []alive.Result, model string) alive.Result {

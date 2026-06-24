@@ -77,11 +77,23 @@ type probeLogEntry struct {
 }
 
 type taskStore struct {
-	mu         sync.Mutex
-	nextID     int64
-	task       probeTask
-	cancels    []context.CancelFunc
-	activeRuns int
+	mu        sync.Mutex
+	nextID    int64
+	nextRunID int64
+	task      probeTask
+	runs      map[string]activeModelRun
+}
+
+type activeModelRun struct {
+	ID     int64
+	Model  string
+	Cancel context.CancelFunc
+}
+
+type modelRun struct {
+	ID    int64
+	Model string
+	Ctx   context.Context
 }
 
 const maxServerLogEntries = 100
@@ -265,13 +277,17 @@ func (s *server) handleProbe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	runner := alive.Runner{Config: runnerCfg, Prompts: alive.DefaultPrompts}
-	task, ctx, err := s.tasks.start(models, loopCountsForModels(models, runnerCfg.ModelLoopCounts))
+	task, runs, err := s.tasks.start(models, loopCountsForModels(models, runnerCfg.ModelLoopCounts))
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	go s.runProbeTask(ctx, task.ID, runner)
+	for _, run := range runs {
+		modelCfg := runnerCfg
+		modelCfg.Models = []string{run.Model}
+		runner := alive.Runner{Config: modelCfg, Prompts: alive.DefaultPrompts}
+		go s.runProbeTask(run.Ctx, task.ID, run.ID, runner)
+	}
 	writeJSON(w, probeResponse{Task: task, Config: cfg})
 }
 
@@ -288,16 +304,20 @@ func (s *server) handleStopProbe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, probeResponse{Task: task})
 }
 
-func (s *server) runProbeTask(ctx context.Context, taskID int64, runner alive.Runner) {
+func (s *server) runProbeTask(ctx context.Context, taskID, runID int64, runner alive.Runner) {
 	events, err := runner.RunEvents(ctx)
+	model := ""
+	if len(runner.Config.Models) > 0 {
+		model = runner.Config.Models[0]
+	}
 	if err != nil {
-		s.tasks.fail(taskID, err.Error())
+		s.tasks.failRun(taskID, runID, model, err.Error())
 		return
 	}
 	for event := range events {
-		s.tasks.applyEvent(taskID, event)
+		s.tasks.applyEvent(taskID, runID, event)
 	}
-	s.tasks.finish(taskID)
+	s.tasks.finishRun(taskID, runID, model)
 }
 
 func (s *server) streamProbe(w http.ResponseWriter, r *http.Request, runner alive.Runner) {
@@ -320,22 +340,38 @@ func (s *server) streamProbe(w http.ResponseWriter, r *http.Request, runner aliv
 	}
 }
 
-func (ts *taskStore) start(models []string, loopCounts map[string]int) (probeTask, context.Context, error) {
+func (ts *taskStore) start(models []string, loopCounts map[string]int) (probeTask, []modelRun, error) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	ctx, cancel := context.WithCancel(context.Background())
 
-	if ts.task.Running {
-		if ts.task.Stopping {
-			cancel()
-			return probeTask{}, nil, errors.New("a probe task is stopping")
+	if ts.task.Running && ts.task.Stopping {
+		return probeTask{}, nil, errors.New("a probe task is stopping")
+	}
+	if ts.runs == nil {
+		ts.runs = make(map[string]activeModelRun)
+	}
+
+	if !ts.task.Running {
+		logs := append([]probeLogEntry(nil), ts.task.Logs...)
+		results := append([]alive.Result(nil), ts.task.Results...)
+		for _, res := range initialRunningResults(models) {
+			results = upsertResult(results, res)
 		}
-		if duplicate := firstRunningModel(ts.task.RunningModels, models); duplicate != "" {
-			cancel()
-			return probeTask{}, nil, fmt.Errorf("model %s is already running", duplicate)
+		ts.nextID++
+		now := time.Now().Format(time.RFC3339)
+		ts.task = probeTask{
+			ID:            ts.nextID,
+			Running:       true,
+			Models:        append([]string(nil), models...),
+			RunningModels: append([]string(nil), models...),
+			StartedAt:     now,
+			Results:       results,
+			Logs:          logs,
+			LoopCounts:    loopCountsForModels(models, loopCounts),
 		}
+		ts.runs = make(map[string]activeModelRun)
+	} else {
 		ts.task.Models = alive.AddModels(ts.task.Models, models)
-		ts.task.RunningModels = append(ts.task.RunningModels, models...)
 		for _, res := range initialRunningResults(models) {
 			ts.task.Results = upsertResult(ts.task.Results, res)
 		}
@@ -347,31 +383,21 @@ func (ts *taskStore) start(models []string, loopCounts map[string]int) (probeTas
 		}
 		ts.task.FinishedAt = ""
 		ts.task.Error = ""
-		ts.cancels = append(ts.cancels, cancel)
-		ts.activeRuns++
-		return cloneTask(ts.task), ctx, nil
 	}
 
-	logs := append([]probeLogEntry(nil), ts.task.Logs...)
-	results := append([]alive.Result(nil), ts.task.Results...)
-	for _, res := range initialRunningResults(models) {
-		results = upsertResult(results, res)
+	runs := make([]modelRun, 0, len(models))
+	for _, model := range models {
+		if existing, ok := ts.runs[model]; ok {
+			existing.Cancel()
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		ts.nextRunID++
+		run := activeModelRun{ID: ts.nextRunID, Model: model, Cancel: cancel}
+		ts.runs[model] = run
+		runs = append(runs, modelRun{ID: run.ID, Model: model, Ctx: ctx})
 	}
-	ts.nextID++
-	now := time.Now().Format(time.RFC3339)
-	ts.task = probeTask{
-		ID:            ts.nextID,
-		Running:       true,
-		Models:        append([]string(nil), models...),
-		RunningModels: append([]string(nil), models...),
-		StartedAt:     now,
-		Results:       results,
-		Logs:          logs,
-		LoopCounts:    loopCountsForModels(models, loopCounts),
-	}
-	ts.cancels = []context.CancelFunc{cancel}
-	ts.activeRuns = 1
-	return cloneTask(ts.task), ctx, nil
+	ts.task.RunningModels = runningModelsInOrder(ts.task.Models, ts.runs)
+	return cloneTask(ts.task), runs, nil
 }
 
 func (ts *taskStore) stop() (probeTask, error) {
@@ -381,8 +407,8 @@ func (ts *taskStore) stop() (probeTask, error) {
 		return cloneTask(ts.task), errors.New("no probe task is running")
 	}
 	ts.task.Stopping = true
-	for _, cancel := range ts.cancels {
-		cancel()
+	for _, run := range ts.runs {
+		run.Cancel()
 	}
 	return cloneTask(ts.task), nil
 }
@@ -393,13 +419,16 @@ func (ts *taskStore) snapshot() probeTask {
 	return cloneTask(ts.task)
 }
 
-func (ts *taskStore) applyEvent(taskID int64, event alive.Event) {
+func (ts *taskStore) applyEvent(taskID, runID int64, event alive.Event) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	if ts.task.ID != taskID {
 		return
 	}
 	res := event.Result
+	if !ts.isCurrentRunLocked(runID, res.Model) {
+		return
+	}
 	now := time.Now().Format(time.RFC3339)
 	if event.Type == alive.EventAttempt {
 		ts.task.Results = upsertResult(ts.task.Results, timestampResult(displayAttemptResult(res, ts.loopCountForModel(res.Model)), now))
@@ -415,38 +444,46 @@ func (ts *taskStore) applyEvent(taskID int64, event alive.Event) {
 	}
 }
 
-func (ts *taskStore) finish(taskID int64) {
+func (ts *taskStore) finishRun(taskID, runID int64, model string) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	if ts.task.ID != taskID {
+	if ts.task.ID != taskID || !ts.isCurrentRunLocked(runID, model) {
 		return
 	}
-	if ts.activeRuns > 0 {
-		ts.activeRuns--
-	}
-	if ts.activeRuns > 0 {
+	delete(ts.runs, model)
+	ts.task.RunningModels = removeModelName(ts.task.RunningModels, model)
+	if len(ts.runs) > 0 {
 		return
 	}
 	ts.task.Running = false
 	ts.task.Stopping = false
 	ts.task.RunningModels = nil
 	ts.task.FinishedAt = time.Now().Format(time.RFC3339)
-	ts.cancels = nil
+	ts.runs = nil
 }
 
-func (ts *taskStore) fail(taskID int64, message string) {
+func (ts *taskStore) failRun(taskID, runID int64, model, message string) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	if ts.task.ID != taskID {
+	if ts.task.ID != taskID || !ts.isCurrentRunLocked(runID, model) {
+		return
+	}
+	delete(ts.runs, model)
+	ts.task.RunningModels = removeModelName(ts.task.RunningModels, model)
+	ts.task.Error = message
+	if len(ts.runs) > 0 {
 		return
 	}
 	ts.task.Running = false
 	ts.task.Stopping = false
 	ts.task.RunningModels = nil
-	ts.task.Error = message
 	ts.task.FinishedAt = time.Now().Format(time.RFC3339)
-	ts.cancels = nil
-	ts.activeRuns = 0
+	ts.runs = nil
+}
+
+func (ts *taskStore) isCurrentRunLocked(runID int64, model string) bool {
+	run, ok := ts.runs[model]
+	return ok && run.ID == runID
 }
 
 func (ts *taskStore) loopCountForModel(model string) int {
@@ -492,6 +529,25 @@ func loopCountsForModels(models []string, counts map[string]int) map[string]int 
 		loopCounts[model] = loopCount
 	}
 	return loopCounts
+}
+
+func runningModelsInOrder(models []string, runs map[string]activeModelRun) []string {
+	running := make([]string, 0, len(runs))
+	seen := make(map[string]struct{}, len(runs))
+	for _, model := range models {
+		if _, ok := runs[model]; ok {
+			if _, exists := seen[model]; !exists {
+				running = append(running, model)
+				seen[model] = struct{}{}
+			}
+		}
+	}
+	for model := range runs {
+		if _, exists := seen[model]; !exists {
+			running = append(running, model)
+		}
+	}
+	return running
 }
 
 func firstRunningModel(running, requested []string) string {
