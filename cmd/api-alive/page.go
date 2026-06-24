@@ -384,7 +384,7 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {} };
+    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {}, editLockedModels: new Set() };
     const maxLogEntries = 100;
     const idlePollMS = 60000;
     const runningPollMS = 5000;
@@ -414,25 +414,20 @@ const indexHTML = `<!doctype html>
     }
     function setBusy(value) {
       state.running = value;
-      if (value && state.editing) {
-        state.editing = false;
-        state.draftModels = [];
-        state.draftModelLoopCounts = {};
-      }
       $('runSelectedBtn').disabled = state.editing || runnableSelectedModels().length === 0;
       $('runSelectedBtn').hidden = state.editing;
       $('selectAllLabel').hidden = state.editing;
       $('addForm').hidden = !state.editing;
       $('cancelEditBtn').hidden = !state.editing;
-      $('cancelEditBtn').disabled = value;
-      $('editModelsBtn').disabled = value || !state.config;
+      $('cancelEditBtn').disabled = false;
+      $('editModelsBtn').disabled = !state.config;
       $('editModelsBtn').textContent = state.editing ? 'Save' : 'Edit';
       $('editModelsBtn').className = state.editing ? '' : 'secondary';
       $('stopProbeBtn').disabled = !value || state.task?.stopping;
       $('stopProbeBtn').textContent = state.task?.stopping ? 'Stopping...' : 'Stop task';
       document.querySelectorAll('[data-run-one]').forEach(btn => btn.disabled = state.editing || state.runningModels.has(btn.dataset.runOne) || state.task?.stopping);
       document.querySelectorAll('[data-loop-count]').forEach(input => input.disabled = state.runningModels.has(input.dataset.loopCount) || state.task?.stopping);
-      document.querySelectorAll('[data-move]').forEach(btn => { btn.disabled = value || btn.dataset.boundary === 'true'; });
+      document.querySelectorAll('[data-move]').forEach(btn => { btn.disabled = btn.dataset.boundary === 'true'; });
       renderRunningModels();
     }
     function renderRunningModels() {
@@ -471,8 +466,8 @@ const indexHTML = `<!doctype html>
       $('selectAllLabel').hidden = state.editing;
       $('addForm').hidden = !state.editing;
       $('cancelEditBtn').hidden = !state.editing;
-      $('cancelEditBtn').disabled = state.running;
-      $('editModelsBtn').disabled = state.running || !state.config;
+      $('cancelEditBtn').disabled = false;
+      $('editModelsBtn').disabled = !state.config;
       $('editModelsBtn').textContent = state.editing ? 'Save' : 'Edit';
       $('editModelsBtn').className = state.editing ? '' : 'secondary';
       const models = visibleModels();
@@ -513,13 +508,14 @@ const indexHTML = `<!doctype html>
       $('modelHost').innerHTML = '<table class="model-table model-editor"><thead><tr><th class="model-heading">Model</th><th class="retry-count">Retries</th><th class="editor-actions">Actions</th></tr></thead><tbody>' + models.map((model, index) => {
         const upDisabled = index === 0 ? 'disabled data-boundary="true"' : 'data-boundary="false"';
         const downDisabled = index === models.length - 1 ? 'disabled data-boundary="true"' : 'data-boundary="false"';
+        const deleteDisabled = state.editLockedModels.has(model) ? 'disabled title="Running when editing started"' : '';
         return '<tr>' +
           '<td class="model" title="' + escapeText(model) + '">' + escapeText(model) + '</td>' +
           '<td class="retry-count">' + loopCountInput(model, draftLoopCountFor(model), true) + '</td>' +
           '<td class="editor-actions"><div class="move-actions">' +
             '<button type="button" class="secondary table-action" data-move="up" data-model="' + escapeText(model) + '" ' + upDisabled + '>Up</button>' +
             '<button type="button" class="secondary table-action" data-move="down" data-model="' + escapeText(model) + '" ' + downDisabled + '>Down</button>' +
-            '<button type="button" class="secondary table-action" data-delete-model="' + escapeText(model) + '">Delete</button>' +
+            '<button type="button" class="secondary table-action" data-delete-model="' + escapeText(model) + '" ' + deleteDisabled + '>Delete</button>' +
           '</div></td></tr>';
       }).join('') + '</tbody></table>';
       document.querySelectorAll('[data-move]').forEach(button => button.addEventListener('click', () => moveModel(button.dataset.model, button.dataset.move)));
@@ -530,10 +526,6 @@ const indexHTML = `<!doctype html>
       }));
     }
     function renderModels() {
-      if (state.running && state.editing) {
-        state.editing = false;
-        state.draftModels = [];
-      }
       const models = visibleModels();
       updateSelectedCount();
       if (state.editing) {
@@ -630,7 +622,7 @@ const indexHTML = `<!doctype html>
       setMessage('Added ' + name);
     }
     function deleteModel(model) {
-      if (state.running || !state.editing) return;
+      if (!state.editing || state.editLockedModels.has(model)) return;
       state.draftModels = state.draftModels.filter(existing => existing !== model);
       delete state.draftModelLoopCounts[model];
       state.selected.delete(model);
@@ -638,7 +630,7 @@ const indexHTML = `<!doctype html>
       setMessage('Removed ' + model);
     }
     async function moveModel(model, direction) {
-      if (state.running || !state.editing) return;
+      if (!state.editing) return;
       const models = [...state.draftModels];
       const index = models.indexOf(model);
       const nextIndex = direction === 'up' ? index - 1 : index + 1;
@@ -649,11 +641,12 @@ const indexHTML = `<!doctype html>
       setMessage('Model order updated.');
     }
     async function toggleModelEdit() {
-      if (state.running || !state.config) return;
+      if (!state.config) return;
       if (!state.editing) {
         state.editing = true;
         state.draftModels = [...(state.config.models || [])];
         state.draftModelLoopCounts = loopCountsForModels(state.draftModels, state.config.model_loop_counts || {});
+        state.editLockedModels = new Set(state.runningModels);
         state.selected = new Set();
         renderModels();
         setMessage('Editing models.');
@@ -663,6 +656,7 @@ const indexHTML = `<!doctype html>
       state.editing = false;
       state.draftModels = [];
       state.draftModelLoopCounts = {};
+      state.editLockedModels = new Set();
       state.selected = new Set([...state.selected].filter(model => state.config.models.includes(model)));
       $('newModel').value = '';
       renderModels();
@@ -674,6 +668,7 @@ const indexHTML = `<!doctype html>
       state.editing = false;
       state.draftModels = [];
       state.draftModelLoopCounts = {};
+      state.editLockedModels = new Set();
       $('newModel').value = '';
       renderModels();
       setMessage('Edit cancelled.');
