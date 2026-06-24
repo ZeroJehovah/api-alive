@@ -110,6 +110,34 @@ const indexHTML = `<!doctype html>
       padding: 0 10px;
       font-size: 12px;
     }
+    .alert-button {
+      border-color: var(--line);
+      background: #fff;
+      color: var(--text);
+    }
+    .alert-button::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--muted);
+      flex: 0 0 auto;
+    }
+    .alert-button:hover { background: #f8fafc; }
+    .alert-button.alert-on {
+      color: var(--ok);
+      border-color: rgba(6, 118, 71, .32);
+      background: rgba(6, 118, 71, .07);
+    }
+    .alert-button.alert-on::before { background: var(--ok); }
+    .alert-button.alert-blocked {
+      color: var(--warn);
+      border-color: rgba(181, 71, 8, .35);
+      background: rgba(181, 71, 8, .08);
+    }
+    .alert-button.alert-blocked::before { background: var(--warn); }
+    .alert-button.alert-request::before { background: #2563eb; }
+    .alert-button.alert-unavailable { color: var(--muted); }
     .models-actions { flex: 1 1 auto; min-width: 0; }
     .settings { display: grid; gap: 10px; }
     .settings .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -315,7 +343,7 @@ const indexHTML = `<!doctype html>
           <h2>Runtime</h2>
           <div class="header-actions">
             <button class="secondary" id="reloadBtn">Refresh</button>
-            <button class="secondary" id="notificationBtn" type="button">Enable alerts</button>
+            <button class="alert-button alert-request" id="notificationBtn" type="button">Allow alerts</button>
             <button id="saveConfigBtn">Save runtime</button>
           </div>
         </header>
@@ -412,20 +440,25 @@ const indexHTML = `<!doctype html>
       const btn = $('notificationBtn');
       if (!btn) return;
       const permission = notificationPermission();
+      btn.className = 'alert-button';
       if (permission === 'unsupported') {
-        btn.textContent = 'Alerts unavailable';
+        btn.classList.add('alert-unavailable');
+        btn.textContent = 'No alerts';
         btn.disabled = true;
         btn.title = 'Browser notifications are unavailable in this browser or context.';
       } else if (permission === 'granted') {
+        btn.classList.add('alert-on');
         btn.textContent = 'Alerts on';
         btn.disabled = false;
         btn.title = 'Background success notifications are enabled.';
       } else if (permission === 'denied') {
+        btn.classList.add('alert-blocked');
         btn.textContent = 'Alerts blocked';
-        btn.disabled = true;
-        btn.title = 'Browser notifications are blocked for this site.';
+        btn.disabled = false;
+        btn.title = 'Notifications are blocked for this site. Use browser site settings to allow them.';
       } else {
-        btn.textContent = 'Enable alerts';
+        btn.classList.add('alert-request');
+        btn.textContent = 'Allow alerts';
         btn.disabled = false;
         btn.title = 'Enable browser notifications for background successes.';
       }
@@ -442,7 +475,7 @@ const indexHTML = `<!doctype html>
         return true;
       }
       if (Notification.permission === 'denied') {
-        if (!quiet) setMessage('Browser notifications are blocked for this site.');
+        if (!quiet) setMessage('Notifications are blocked. Allow them in browser site settings, then refresh.');
         updateNotificationButton();
         return false;
       }
@@ -461,6 +494,15 @@ const indexHTML = `<!doctype html>
         updateNotificationButton();
         return false;
       });
+    }
+    function installNotificationPermissionPrompt() {
+      autoRequestNotificationPermission();
+      const requestAfterGesture = (event) => {
+        if (event.target?.closest?.('#notificationBtn')) return;
+        if (notificationPermission() === 'default') autoRequestNotificationPermission();
+      };
+      document.addEventListener('pointerdown', requestAfterGesture, { once: true, capture: true });
+      document.addEventListener('keydown', requestAfterGesture, { once: true, capture: true });
     }
     function successLogKey(entry) {
       const res = entry.result || entry;
@@ -837,7 +879,7 @@ const indexHTML = `<!doctype html>
     renderLog();
     renderRunningModels();
     updateNotificationButton();
-    autoRequestNotificationPermission();
+    installNotificationPermissionPrompt();
     loadState().catch(err => setMessage(err.message));
   </script>
 </body>
