@@ -28,6 +28,11 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`function displayDateTime`,
 		`displayDateTime(res.updated_at)`,
 		`<th class="result-time">Result time</th>`,
+		`<th class="progress">Progress</th>`,
+		`function activeLoopCountFor`,
+		`function displayProgress`,
+		`function displaySeconds`,
+		`Success (' + escapeText(displaySeconds(res.duration_ms)) + 's)`,
 		`idlePollMS = 60000`,
 		`runningPollMS = 5000`,
 		`async function startProbe`,
@@ -235,6 +240,21 @@ func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *tes
 	}
 	if _, _, err := store.start([]string{"model-c"}, map[string]int{"model-c": 2}); err != nil {
 		t.Fatalf("start after finish failed: %v", err)
+	}
+}
+
+func TestProbeTaskJSONIncludesLoopCounts(t *testing.T) {
+	store := &taskStore{}
+	task, _, err := store.start([]string{"model-a"}, map[string]int{"model-a": 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"loop_counts":{"model-a":3}`) {
+		t.Fatalf("task JSON missing loop_counts: %s", body)
 	}
 }
 
