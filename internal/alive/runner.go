@@ -121,7 +121,7 @@ func (r Runner) runModelEvents(parent context.Context, model string, rng *rand.R
 	attemptResults := make([]Result, 0, loopCount)
 	for attempt := 1; attempt <= loopCount; attempt++ {
 		prompt := r.Prompts[rng.Intn(len(r.Prompts))]
-		res = r.runAttempt(parent, model, prompt, tmp, started, attempt)
+		res = r.runAttempt(parent, model, prompt, tmp, attempt)
 		attemptResults = append(attemptResults, res)
 		events <- Event{Type: EventAttempt, Result: res}
 		if res.Success {
@@ -137,7 +137,8 @@ func (r Runner) runModelEvents(parent context.Context, model string, rng *rand.R
 	return res
 }
 
-func (r Runner) runAttempt(parent context.Context, model string, prompt PromptCase, tmp string, started time.Time, attempt int) Result {
+func (r Runner) runAttempt(parent context.Context, model string, prompt PromptCase, tmp string, attempt int) Result {
+	started := time.Now()
 	res := Result{
 		Model:    model,
 		Attempts: attempt,

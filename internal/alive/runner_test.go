@@ -156,6 +156,38 @@ func TestRunnerEmitsAttemptEventsBeforeFinalResult(t *testing.T) {
 	}
 }
 
+func TestRunnerAttemptDurationsArePerAttempt(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Models = []string{"a"}
+	cfg.ModelLoopCounts = map[string]int{"a": 2}
+	r := Runner{
+		Config: cfg,
+		commandBuilder: staticCommand(`n=$(cat tries 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > tries; ` +
+			`if [ "$n" -eq 1 ]; then sleep 1; echo NO; else echo OK; fi`),
+		Prompts: []PromptCase{{Input: "Say OK.", Expected: "OK"}},
+	}
+
+	events, err := r.RunEvents(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var attempts []Result
+	for event := range events {
+		if event.Type == EventAttempt {
+			attempts = append(attempts, event.Result)
+		}
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("attempt count = %d, want 2: %#v", len(attempts), attempts)
+	}
+	if attempts[0].DurationMS < 800 {
+		t.Fatalf("first attempt duration = %dms, want at least 800ms", attempts[0].DurationMS)
+	}
+	if attempts[1].DurationMS >= attempts[0].DurationMS {
+		t.Fatalf("second attempt duration = %dms, want per-attempt duration shorter than first attempt %dms", attempts[1].DurationMS, attempts[0].DurationMS)
+	}
+}
+
 func TestRunnerCancelStopsAfterCurrentAttempt(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Models = []string{"a"}
