@@ -30,6 +30,8 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`async function stopProbe`,
 		`id="stopProbeBtn"`,
 		`class="header-actions"`,
+		`class="header-actions models-actions"`,
+		`.models-actions { flex: 1 1 auto; min-width: 0; }`,
 		`.settings input, .settings button`,
 		`min-height: 52px`,
 		`class="live-dot"`,

@@ -110,6 +110,7 @@ const indexHTML = `<!doctype html>
       padding: 0 10px;
       font-size: 12px;
     }
+    .models-actions { flex: 1 1 auto; min-width: 0; }
     .settings { display: grid; gap: 10px; }
     .settings .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .settings label { gap: 5px; }
@@ -339,24 +340,22 @@ const indexHTML = `<!doctype html>
       <section class="panel">
         <header>
           <h2>Models</h2>
-          <span class="pill" id="selectedCount">0 selected</span>
-        </header>
-        <div class="body">
-          <div class="toolbar">
+          <div class="header-actions models-actions">
             <label class="select-all-label" id="selectAllLabel">
               <input id="selectAll" type="checkbox" style="width:16px; min-height:16px;"> Select all
             </label>
+            <span class="pill" id="selectedCount">0 selected</span>
             <form class="add-form" id="addForm" hidden>
               <input id="newModel" placeholder="gpt-5 or vendor/gpt-5.5">
               <button type="submit">Add</button>
             </form>
-            <div class="actions">
-              <button class="secondary" id="editModelsBtn" type="button">Edit</button>
-              <button class="secondary" id="cancelEditBtn" type="button" hidden>Cancel</button>
-              <button id="runSelectedBtn">Run selected</button>
-              <button class="secondary" id="stopProbeBtn" disabled>Stop task</button>
-            </div>
+            <button class="secondary" id="editModelsBtn" type="button">Edit</button>
+            <button class="secondary" id="cancelEditBtn" type="button" hidden>Cancel</button>
+            <button id="runSelectedBtn">Run selected</button>
+            <button class="secondary" id="stopProbeBtn" disabled>Stop task</button>
           </div>
+        </header>
+        <div class="body">
           <div id="modelHost"></div>
         </div>
       </section>
