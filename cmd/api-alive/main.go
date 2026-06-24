@@ -338,6 +338,10 @@ func (ts *taskStore) start(models []string, loopCount int) (probeTask, context.C
 	}
 
 	logs := append([]probeLogEntry(nil), ts.task.Logs...)
+	results := append([]alive.Result(nil), ts.task.Results...)
+	for _, res := range initialRunningResults(models) {
+		results = upsertResult(results, res)
+	}
 	ts.nextID++
 	now := time.Now().Format(time.RFC3339)
 	ts.task = probeTask{
@@ -346,7 +350,7 @@ func (ts *taskStore) start(models []string, loopCount int) (probeTask, context.C
 		Models:        append([]string(nil), models...),
 		RunningModels: append([]string(nil), models...),
 		StartedAt:     now,
-		Results:       initialRunningResults(models),
+		Results:       results,
 		Logs:          logs,
 		LoopCount:     loopCount,
 		LoopCounts:    loopCountsFor(models, loopCount),
