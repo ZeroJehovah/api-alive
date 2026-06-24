@@ -385,7 +385,7 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {}, editLockedModels: new Set(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set() };
+    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {}, dirtyLoopCounts: new Set(), editLockedModels: new Set(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set() };
     const maxLogEntries = 100;
     const idlePollMS = 60000;
     const runningPollMS = 5000;
@@ -508,7 +508,6 @@ const indexHTML = `<!doctype html>
       $('stopProbeBtn').disabled = !value || state.task?.stopping;
       $('stopProbeBtn').textContent = state.task?.stopping ? 'Stopping...' : 'Stop task';
       document.querySelectorAll('[data-run-one]').forEach(btn => btn.disabled = state.editing || state.task?.stopping);
-      document.querySelectorAll('[data-loop-count]').forEach(input => input.disabled = state.runningModels.has(input.dataset.loopCount) || state.task?.stopping);
       document.querySelectorAll('[data-move]').forEach(btn => { btn.disabled = btn.dataset.boundary === 'true'; });
       renderRunningModels();
     }
@@ -583,6 +582,29 @@ const indexHTML = `<!doctype html>
     function modelLoopCounts() { return state.config?.model_loop_counts || {}; }
     function loopCountFor(model) { return normalizeLoopCount(modelLoopCounts()[model] || 1); }
     function draftLoopCountFor(model) { return normalizeLoopCount(state.draftModelLoopCounts[model] || 1); }
+    function mergeDirtyLoopCounts(config) {
+      if (!config) return config;
+      const merged = { ...config, models: [...(config.models || [])], model_loop_counts: { ...(config.model_loop_counts || {}) } };
+      const currentCounts = state.config?.model_loop_counts || {};
+      const models = new Set(merged.models || []);
+      state.dirtyLoopCounts.forEach(model => {
+        if (!models.has(model)) {
+          state.dirtyLoopCounts.delete(model);
+          return;
+        }
+        if (currentCounts[model] !== undefined) {
+          merged.model_loop_counts[model] = normalizeLoopCount(currentCounts[model]);
+        }
+      });
+      return merged;
+    }
+    function clearDirtyLoopCounts(models) {
+      if (!models) {
+        state.dirtyLoopCounts.clear();
+        return;
+      }
+      models.forEach(model => state.dirtyLoopCounts.delete(model));
+    }
     function loopCountsForModels(models, source) {
       const out = {};
       models.forEach(model => { out[model] = normalizeLoopCount((source || {})[model] || 1); });
@@ -648,6 +670,7 @@ const indexHTML = `<!doctype html>
         input.value = String(input.value).replace(/\D/g, '').slice(0, 4);
         if (!state.config.model_loop_counts) state.config.model_loop_counts = {};
         state.config.model_loop_counts[input.dataset.loopCount] = normalizeLoopCount(input.value);
+        state.dirtyLoopCounts.add(input.dataset.loopCount);
       }));
       document.querySelectorAll('[data-run-one]').forEach(button => button.addEventListener('click', () => startProbe([button.dataset.runOne]).catch(err => setMessage(err.message))));
       updateSelectedCount();
@@ -671,7 +694,7 @@ const indexHTML = `<!doctype html>
       renderModels();
     }
     function applyServerState(data) {
-      state.config = data.config;
+      state.config = mergeDirtyLoopCounts(data.config);
       state.selected = new Set([...state.selected].filter(model => visibleModels().includes(model)));
       $('configPath').textContent = data.config_path || 'config.json';
       fillForm(state.config);
@@ -698,6 +721,7 @@ const indexHTML = `<!doctype html>
       cfg.model_loop_counts = loopCountsForModels(cfg.models || [], cfg.model_loop_counts || {});
       cfg.max_output_chars = Number($('maxOutputChars').value) || 4000;
       state.config = await request('/api/config', { method: 'POST', body: JSON.stringify(cfg) });
+      clearDirtyLoopCounts();
       fillForm(state.config);
       renderModels();
       setMessage('Runtime saved.');
@@ -746,6 +770,7 @@ const indexHTML = `<!doctype html>
         return;
       }
       state.config = await request('/api/config', { method: 'POST', body: JSON.stringify({ ...state.config, models: state.draftModels, model_loop_counts: loopCountsForModels(state.draftModels, state.draftModelLoopCounts) }) });
+      clearDirtyLoopCounts();
       state.editing = false;
       state.draftModels = [];
       state.draftModelLoopCounts = {};
@@ -770,7 +795,8 @@ const indexHTML = `<!doctype html>
       models = [...new Set(models)].filter(model => model);
       if (!models.length || state.editing || state.task?.stopping) return;
       const data = await request('/api/probe', { method: 'POST', body: JSON.stringify({ models, model_loop_counts: loopCountsForModels(models, state.config.model_loop_counts || {}) }) });
-      if (data.config) state.config = data.config;
+      clearDirtyLoopCounts(models);
+      if (data.config) state.config = mergeDirtyLoopCounts(data.config);
       applyTask(data.task);
       setMessage('Probe task started.');
       schedulePoll();
