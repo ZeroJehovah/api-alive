@@ -68,7 +68,7 @@ type probeTask struct {
 	StartedAt     string          `json:"started_at,omitempty"`
 	FinishedAt    string          `json:"finished_at,omitempty"`
 	Error         string          `json:"error,omitempty"`
-	LoopCounts    map[string]int  `json:"-"`
+	LoopCounts    map[string]int  `json:"loop_counts,omitempty"`
 }
 
 type probeLogEntry struct {
@@ -596,10 +596,11 @@ func cloneTask(task probeTask) probeTask {
 	task.Results = append([]alive.Result(nil), task.Results...)
 	task.Logs = append([]probeLogEntry(nil), task.Logs...)
 	if task.LoopCounts != nil {
-		task.LoopCounts = make(map[string]int, len(task.LoopCounts))
+		loopCounts := make(map[string]int, len(task.LoopCounts))
 		for model, loopCount := range task.LoopCounts {
-			task.LoopCounts[model] = loopCount
+			loopCounts[model] = loopCount
 		}
+		task.LoopCounts = loopCounts
 	}
 	return task
 }

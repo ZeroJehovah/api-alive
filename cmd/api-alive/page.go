@@ -160,8 +160,8 @@ const indexHTML = `<!doctype html>
     .editor-actions { width: 150px; }
     .check { width: 34px; }
     .order { width: 92px; }
-    .result { width: 96px; }
-    .attempts { width: 78px; }
+    .result { width: 118px; }
+    .progress { width: 78px; }
     .retry-count { width: 58px; }
     .result-time { width: 154px; }
     .row-actions { width: 112px; }
@@ -290,7 +290,7 @@ const indexHTML = `<!doctype html>
       .toolbar { align-items: stretch; }
       .toolbar .actions { width: 100%; }
       .toolbar .actions button { flex: 1; }
-      th.attempts, td.attempts, th.result-time, td.result-time { display: none; }
+      th.progress, td.progress, th.result-time, td.result-time { display: none; }
       .order { width: 86px; }
       .row-actions { width: 68px; }
     }
@@ -481,7 +481,17 @@ const indexHTML = `<!doctype html>
       if (state.runningModels.has(model)) return '<span class="pill run"><span class="live-dot"></span>Running</span>';
       const res = resultFor(model);
       if (!res) return '<span class="pill">Idle</span>';
-      return res.success ? '<span class="pill ok">Success</span>' : '<span class="pill bad">Failed</span>';
+      return res.success ? '<span class="pill ok">Success (' + escapeText(displaySeconds(res.duration_ms)) + 's)</span>' : '<span class="pill bad">Failed</span>';
+    }
+    function activeLoopCountFor(model) {
+      return normalizeLoopCount(state.task?.loop_counts?.[model] || loopCountFor(model));
+    }
+    function displayProgress(model, res) {
+      if (!res) return '';
+      return normalizeLoopCount(res.attempts || 1) + '/' + activeLoopCountFor(model);
+    }
+    function displaySeconds(durationMS) {
+      return Math.round((durationMS || 0) / 1000);
     }
     function normalizeLoopCount(value) {
       const digits = String(value ?? '').replace(/\D/g, '').slice(0, 4);
@@ -537,14 +547,14 @@ const indexHTML = `<!doctype html>
         $('modelHost').innerHTML = '<div class="empty">No models configured.</div>';
         return;
       }
-      $('modelHost').innerHTML = '<table class="model-table"><thead><tr><th class="check"></th><th class="model-heading">Model</th><th class="result">Result</th><th class="attempts">Attempts</th><th class="result-time">Result time</th><th class="retry-count">Retries</th><th class="row-actions"></th></tr></thead><tbody>' + models.map((model) => {
+      $('modelHost').innerHTML = '<table class="model-table"><thead><tr><th class="check"></th><th class="model-heading">Model</th><th class="result">Result</th><th class="progress">Progress</th><th class="result-time">Result time</th><th class="retry-count">Retries</th><th class="row-actions"></th></tr></thead><tbody>' + models.map((model) => {
         const res = resultFor(model);
         const checked = state.selected.has(model) ? 'checked' : '';
         const resultTime = res ? displayDateTime(res.updated_at) : '';
-        const attempts = res ? res.attempts : '';
+        const progress = displayProgress(model, res);
         return '<tr><td class="check"><input data-select="' + escapeText(model) + '" type="checkbox" ' + checked + '></td>' +
           '<td class="model" title="' + escapeText(model) + '">' + escapeText(model) + '</td>' +
-          '<td class="result">' + statusPill(model) + '</td><td class="attempts">' + escapeText(attempts) + '</td><td class="result-time">' + escapeText(resultTime) + '</td>' +
+          '<td class="result">' + statusPill(model) + '</td><td class="progress">' + escapeText(progress) + '</td><td class="result-time">' + escapeText(resultTime) + '</td>' +
           '<td class="retry-count">' + loopCountInput(model, loopCountFor(model), false) + '</td>' +
           '<td class="row-actions"><button type="button" class="secondary table-action" data-run-one="' + escapeText(model) + '">Run</button></td></tr>';
       }).join('') + '</tbody></table>';
