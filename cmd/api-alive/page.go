@@ -430,9 +430,10 @@ const indexHTML = `<!doctype html>
         btn.title = 'Enable browser notifications for background successes.';
       }
     }
-    async function requestNotificationPermission() {
+    async function requestNotificationPermission(options = {}) {
+      const quiet = !!options.quiet;
       if (!notificationsSupported()) {
-        setMessage('Browser notifications are unavailable.');
+        if (!quiet) setMessage('Browser notifications are unavailable.');
         updateNotificationButton();
         return false;
       }
@@ -441,14 +442,25 @@ const indexHTML = `<!doctype html>
         return true;
       }
       if (Notification.permission === 'denied') {
-        setMessage('Browser notifications are blocked for this site.');
+        if (!quiet) setMessage('Browser notifications are blocked for this site.');
         updateNotificationButton();
         return false;
       }
       const permission = await Notification.requestPermission();
       updateNotificationButton();
-      setMessage(permission === 'granted' ? 'Background alerts enabled.' : 'Background alerts not enabled.');
+      if (!quiet) setMessage(permission === 'granted' ? 'Background alerts enabled.' : 'Background alerts not enabled.');
       return permission === 'granted';
+    }
+    async function autoRequestNotificationPermission() {
+      if (notificationPermission() !== 'default') {
+        updateNotificationButton();
+        return false;
+      }
+      return requestNotificationPermission({ quiet: true }).catch(err => {
+        console.warn('notification permission request failed', err);
+        updateNotificationButton();
+        return false;
+      });
     }
     function successLogKey(entry) {
       const res = entry.result || entry;
@@ -825,6 +837,7 @@ const indexHTML = `<!doctype html>
     renderLog();
     renderRunningModels();
     updateNotificationButton();
+    autoRequestNotificationPermission();
     loadState().catch(err => setMessage(err.message));
   </script>
 </body>
