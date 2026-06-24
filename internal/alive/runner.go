@@ -20,6 +20,7 @@ type Result struct {
 	Error          string        `json:"error,omitempty"`
 	Duration       time.Duration `json:"-"`
 	DurationMS     int64         `json:"duration_ms"`
+	UpdatedAt      string        `json:"updated_at,omitempty"`
 	Prompt         string        `json:"prompt"`
 	Expected       string        `json:"expected"`
 	Output         string        `json:"output,omitempty"`

@@ -152,7 +152,7 @@ const indexHTML = `<!doctype html>
     th { color: var(--muted); font-weight: 600; background: #fbfcfe; }
     td.model { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
     .model-table th, .model-table td { padding: 4px 6px; height: 30px; }
-    .model-table .model-heading { width: 34%; }
+    .model-table .model-heading { width: 30ch; }
     .model-table input[type="checkbox"] { width: 16px; height: 16px; min-height: 16px; padding: 0; display: block; }
     .model-table button.table-action { min-height: 24px; padding: 0 7px; }
     .model-editor .model-heading { width: auto; }
@@ -161,7 +161,7 @@ const indexHTML = `<!doctype html>
     .order { width: 92px; }
     .result { width: 96px; }
     .attempts { width: 78px; }
-    .duration { width: 78px; }
+    .result-time { width: 154px; }
     .row-actions { width: 70px; }
     .move-actions { display: flex; gap: 4px; }
     .pill {
@@ -259,11 +259,11 @@ const indexHTML = `<!doctype html>
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .log-time-col { width: 154px; }
     .log-status-col { width: 88px; }
     .log-model-col { width: 30ch; }
     .log-attempt-col { width: 72px; }
     .log-seconds-col { width: 80px; }
-    .log-time-col { width: 86px; }
     .log-error-col { width: auto; }
     .log-empty {
       padding: 22px 12px;
@@ -288,7 +288,7 @@ const indexHTML = `<!doctype html>
       .toolbar { align-items: stretch; }
       .toolbar .actions { width: 100%; }
       .toolbar .actions button { flex: 1; }
-      th.attempts, td.attempts, th.duration, td.duration { display: none; }
+      th.attempts, td.attempts, th.result-time, td.result-time { display: none; }
       .order { width: 86px; }
       .row-actions { width: 68px; }
     }
@@ -371,14 +371,14 @@ const indexHTML = `<!doctype html>
         <div class="log-table-wrap">
           <table class="log-table">
             <colgroup>
+              <col class="log-time-col">
               <col class="log-status-col">
               <col class="log-model-col">
               <col class="log-attempt-col">
               <col class="log-seconds-col">
-              <col class="log-time-col">
               <col class="log-error-col">
             </colgroup>
-            <thead><tr><th>Status</th><th>Model</th><th>Try</th><th>Seconds</th><th>Time</th><th>Error</th></tr></thead>
+            <thead><tr><th>Time</th><th>Status</th><th>Model</th><th>Try</th><th>Seconds</th><th>Error</th></tr></thead>
             <tbody id="logList"></tbody>
           </table>
         </div>
@@ -399,10 +399,13 @@ const indexHTML = `<!doctype html>
     function escapeText(value) {
       return String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
     }
-    function displayTime(value) {
+    function twoDigits(value) { return String(value).padStart(2, '0'); }
+    function displayDateTime(value) {
       if (!value) return '';
       const date = new Date(value);
-      return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString();
+      if (Number.isNaN(date.getTime())) return value;
+      return date.getFullYear() + '-' + twoDigits(date.getMonth() + 1) + '-' + twoDigits(date.getDate()) + ' ' +
+        twoDigits(date.getHours()) + ':' + twoDigits(date.getMinutes()) + ':' + twoDigits(date.getSeconds());
     }
     function visibleModels() { return state.editing ? state.draftModels : (state.config?.models || []); }
     function schedulePoll() {
@@ -451,14 +454,14 @@ const indexHTML = `<!doctype html>
         const cls = res.success ? 'ok' : 'bad';
         const icon = res.success ? '✅' : '❌';
         const seconds = ((res.duration_ms || 0) / 1000).toFixed(3);
-        const time = displayTime(entry.time);
+        const time = displayDateTime(entry.time);
         const errorText = res.success ? '' : (res.error || 'unknown error');
         return '<tr class="log-entry ' + cls + '">' +
+          '<td class="log-time">' + escapeText(time) + '</td>' +
           '<td class="log-status">' + icon + ' ' + status + '</td>' +
           '<td class="log-model">' + escapeText(res.model) + '</td>' +
           '<td>' + escapeText(res.attempts) + '</td>' +
           '<td>' + escapeText(seconds) + '</td>' +
-          '<td class="log-time">' + escapeText(time) + '</td>' +
           '<td class="log-error" title="' + escapeText(errorText) + '">' + escapeText(errorText) + '</td></tr>';
       }).join('');
     }
@@ -521,14 +524,14 @@ const indexHTML = `<!doctype html>
         $('modelHost').innerHTML = '<div class="empty">No models configured.</div>';
         return;
       }
-      $('modelHost').innerHTML = '<table class="model-table"><thead><tr><th class="check"></th><th class="model-heading">Model</th><th class="result">Result</th><th class="attempts">Attempts</th><th class="duration">Seconds</th><th class="row-actions"></th></tr></thead><tbody>' + models.map((model) => {
+      $('modelHost').innerHTML = '<table class="model-table"><thead><tr><th class="check"></th><th class="model-heading">Model</th><th class="result">Result</th><th class="attempts">Attempts</th><th class="result-time">Result time</th><th class="row-actions"></th></tr></thead><tbody>' + models.map((model) => {
         const res = resultFor(model);
         const checked = state.selected.has(model) ? 'checked' : '';
-        const seconds = res && !state.runningModels.has(model) ? ((res.duration_ms || 0) / 1000).toFixed(3) : '';
+        const resultTime = res ? displayDateTime(res.updated_at) : '';
         const attempts = res ? res.attempts : '';
         return '<tr><td class="check"><input data-select="' + escapeText(model) + '" type="checkbox" ' + checked + '></td>' +
           '<td class="model" title="' + escapeText(model) + '">' + escapeText(model) + '</td>' +
-          '<td class="result">' + statusPill(model) + '</td><td class="attempts">' + escapeText(attempts) + '</td><td class="duration">' + escapeText(seconds) + '</td>' +
+          '<td class="result">' + statusPill(model) + '</td><td class="attempts">' + escapeText(attempts) + '</td><td class="result-time">' + escapeText(resultTime) + '</td>' +
           '<td class="row-actions"><button type="button" class="secondary table-action" data-run-one="' + escapeText(model) + '">Run</button></td></tr>';
       }).join('') + '</tbody></table>';
       document.querySelectorAll('[data-select]').forEach(input => input.addEventListener('change', () => {
