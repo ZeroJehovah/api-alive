@@ -126,6 +126,10 @@ func (r Runner) runModelEvents(parent context.Context, model string, rng *rand.R
 			res.AttemptResults = attemptResults
 			return res
 		}
+		if parent.Err() != nil {
+			res.AttemptResults = attemptResults
+			return res
+		}
 	}
 	res.AttemptResults = attemptResults
 	return res
@@ -158,6 +162,9 @@ func (r Runner) runAttempt(parent context.Context, model string, prompt PromptCa
 		}
 		if ctx.Err() == context.DeadlineExceeded {
 			res.Error = fmt.Sprintf("timeout after %s", r.Config.Timeout())
+		}
+		if ctx.Err() == context.Canceled {
+			res.Error = context.Canceled.Error()
 		}
 	} else {
 		if outputContainsExpected(res.Output, prompt.Expected) {
