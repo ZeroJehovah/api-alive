@@ -27,6 +27,9 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`idlePollMS = 60000`,
 		`runningPollMS = 5000`,
 		`async function startProbe`,
+		`function runnableSelectedModels`,
+		`!state.runningModels.has(model)`,
+		`state.runningModels.has(btn.dataset.runOne)`,
 		`async function stopProbe`,
 		`id="stopProbeBtn"`,
 		`class="header-actions"`,
@@ -137,7 +140,7 @@ func TestConfigEndpointPreservesModelOrder(t *testing.T) {
 	assertConfigModels(t, configPath, []string{"model-b", "model-a", "model-c"})
 }
 
-func TestProbeTaskLifecyclePersistsStateAndRejectsConcurrentStart(t *testing.T) {
+func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *testing.T) {
 	store := &taskStore{}
 	task, ctx, err := store.start([]string{"model-a", "model-b"}, 2)
 	if err != nil {
@@ -149,8 +152,18 @@ func TestProbeTaskLifecyclePersistsStateAndRejectsConcurrentStart(t *testing.T) 
 	if len(task.Results) != 2 || task.Results[0].Attempts != 1 || task.Results[1].Attempts != 1 {
 		t.Fatalf("initial results = %#v", task.Results)
 	}
-	if _, _, err := store.start([]string{"model-c"}, 2); err == nil {
-		t.Fatal("second start succeeded while task was running")
+	secondTask, secondCtx, err := store.start([]string{"model-c"}, 1)
+	if err != nil {
+		t.Fatalf("distinct concurrent start failed: %v", err)
+	}
+	if secondTask.ID != task.ID {
+		t.Fatalf("concurrent start created task id %d, want %d", secondTask.ID, task.ID)
+	}
+	if len(secondTask.RunningModels) != 3 {
+		t.Fatalf("running models after concurrent start = %#v", secondTask.RunningModels)
+	}
+	if _, _, err := store.start([]string{"model-b"}, 2); err == nil {
+		t.Fatal("duplicate concurrent start succeeded while model was running")
 	}
 	store.applyEvent(task.ID, alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}})
 	store.applyEvent(task.ID, alive.Event{Type: alive.EventResult, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10, AttemptResults: []alive.Result{{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}}}})
@@ -158,7 +171,7 @@ func TestProbeTaskLifecyclePersistsStateAndRejectsConcurrentStart(t *testing.T) 
 	if !snap.Running || len(snap.Logs) != 1 || resultByModel(snap.Results, "model-a").Model != "model-a" {
 		t.Fatalf("snapshot after event = %#v", snap)
 	}
-	if len(snap.RunningModels) != 1 || snap.RunningModels[0] != "model-b" {
+	if !reflect.DeepEqual(snap.RunningModels, []string{"model-b", "model-c"}) {
 		t.Fatalf("running models = %#v", snap.RunningModels)
 	}
 	stopping, err := store.stop()
@@ -171,11 +184,20 @@ func TestProbeTaskLifecyclePersistsStateAndRejectsConcurrentStart(t *testing.T) 
 	select {
 	case <-ctx.Done():
 	default:
-		t.Fatal("stop did not cancel task context")
+		t.Fatal("stop did not cancel first task context")
+	}
+	select {
+	case <-secondCtx.Done():
+	default:
+		t.Fatal("stop did not cancel second task context")
 	}
 	store.finish(task.ID)
+	if !store.snapshot().Running {
+		t.Fatal("task stopped before all active runs finished")
+	}
+	store.finish(secondTask.ID)
 	if store.snapshot().Running {
-		t.Fatal("task still running after finish")
+		t.Fatal("task still running after all active runs finished")
 	}
 	if _, _, err := store.start([]string{"model-c"}, 2); err != nil {
 		t.Fatalf("start after finish failed: %v", err)
@@ -223,7 +245,7 @@ func TestProbeTaskStartKeepsPreviousLogs(t *testing.T) {
 	}
 }
 
-func TestProbeEndpointStartsTaskRejectsConcurrentRequestAndStops(t *testing.T) {
+func TestProbeEndpointAllowsDistinctConcurrentRequestsRejectsDuplicateAndStops(t *testing.T) {
 	dir := t.TempDir()
 	commandPath := filepath.Join(dir, "fake-codex")
 	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\nsleep 2\necho OK\n"), 0o755); err != nil {
@@ -231,7 +253,7 @@ func TestProbeEndpointStartsTaskRejectsConcurrentRequestAndStops(t *testing.T) {
 	}
 	configPath := filepath.Join(dir, "config.json")
 	cfg := alive.DefaultConfig()
-	cfg.Models = []string{"model-a"}
+	cfg.Models = []string{"model-a", "model-b"}
 	cfg.CodexCommand = commandPath
 	if err := alive.SaveConfig(configPath, cfg); err != nil {
 		t.Fatal(err)
@@ -243,11 +265,17 @@ func TestProbeEndpointStartsTaskRejectsConcurrentRequestAndStops(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("first probe status = %d, body = %q", rec.Code, rec.Body.String())
 	}
+	body = strings.NewReader(`{"models":["model-b"]}`)
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/probe", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("distinct concurrent probe status = %d, body = %q", rec.Code, rec.Body.String())
+	}
 	body = strings.NewReader(`{"models":["model-a"]}`)
 	rec = httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/probe", body))
 	if rec.Code != http.StatusConflict {
-		t.Fatalf("second probe status = %d, want 409; body = %q", rec.Code, rec.Body.String())
+		t.Fatalf("duplicate concurrent probe status = %d, want 409; body = %q", rec.Code, rec.Body.String())
 	}
 	rec = httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/probe/stop", strings.NewReader(`{}`)))

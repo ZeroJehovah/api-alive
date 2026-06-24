@@ -67,6 +67,7 @@ type probeTask struct {
 	FinishedAt    string          `json:"finished_at,omitempty"`
 	Error         string          `json:"error,omitempty"`
 	LoopCount     int             `json:"-"`
+	LoopCounts    map[string]int  `json:"-"`
 }
 
 type probeLogEntry struct {
@@ -75,10 +76,11 @@ type probeLogEntry struct {
 }
 
 type taskStore struct {
-	mu     sync.Mutex
-	nextID int64
-	task   probeTask
-	cancel context.CancelFunc
+	mu         sync.Mutex
+	nextID     int64
+	task       probeTask
+	cancels    []context.CancelFunc
+	activeRuns int
 }
 
 const maxServerLogEntries = 100
@@ -306,14 +308,39 @@ func (s *server) streamProbe(w http.ResponseWriter, r *http.Request, runner aliv
 func (ts *taskStore) start(models []string, loopCount int) (probeTask, context.Context, error) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+
 	if ts.task.Running {
-		return probeTask{}, nil, errors.New("a probe task is already running")
+		if ts.task.Stopping {
+			cancel()
+			return probeTask{}, nil, errors.New("a probe task is stopping")
+		}
+		if duplicate := firstRunningModel(ts.task.RunningModels, models); duplicate != "" {
+			cancel()
+			return probeTask{}, nil, fmt.Errorf("model %s is already running", duplicate)
+		}
+		ts.task.Models = alive.AddModels(ts.task.Models, models)
+		ts.task.RunningModels = append(ts.task.RunningModels, models...)
+		for _, res := range initialRunningResults(models) {
+			ts.task.Results = upsertResult(ts.task.Results, res)
+		}
+		if ts.task.LoopCounts == nil {
+			ts.task.LoopCounts = make(map[string]int)
+		}
+		for _, model := range models {
+			ts.task.LoopCounts[model] = loopCount
+		}
+		ts.task.FinishedAt = ""
+		ts.task.Error = ""
+		ts.cancels = append(ts.cancels, cancel)
+		ts.activeRuns++
+		return cloneTask(ts.task), ctx, nil
 	}
+
 	logs := append([]probeLogEntry(nil), ts.task.Logs...)
 	ts.nextID++
-	ctx, cancel := context.WithCancel(context.Background())
 	now := time.Now().Format(time.RFC3339)
-	task := probeTask{
+	ts.task = probeTask{
 		ID:            ts.nextID,
 		Running:       true,
 		Models:        append([]string(nil), models...),
@@ -322,9 +349,10 @@ func (ts *taskStore) start(models []string, loopCount int) (probeTask, context.C
 		Results:       initialRunningResults(models),
 		Logs:          logs,
 		LoopCount:     loopCount,
+		LoopCounts:    loopCountsFor(models, loopCount),
 	}
-	ts.task = task
-	ts.cancel = cancel
+	ts.cancels = []context.CancelFunc{cancel}
+	ts.activeRuns = 1
 	return cloneTask(ts.task), ctx, nil
 }
 
@@ -335,8 +363,8 @@ func (ts *taskStore) stop() (probeTask, error) {
 		return cloneTask(ts.task), errors.New("no probe task is running")
 	}
 	ts.task.Stopping = true
-	if ts.cancel != nil {
-		ts.cancel()
+	for _, cancel := range ts.cancels {
+		cancel()
 	}
 	return cloneTask(ts.task), nil
 }
@@ -355,7 +383,7 @@ func (ts *taskStore) applyEvent(taskID int64, event alive.Event) {
 	}
 	res := event.Result
 	if event.Type == alive.EventAttempt {
-		ts.task.Results = upsertResult(ts.task.Results, displayAttemptResult(res, ts.task.LoopCount))
+		ts.task.Results = upsertResult(ts.task.Results, displayAttemptResult(res, ts.loopCountForModel(res.Model)))
 		ts.prependLogLocked(res)
 		return
 	}
@@ -374,11 +402,17 @@ func (ts *taskStore) finish(taskID int64) {
 	if ts.task.ID != taskID {
 		return
 	}
+	if ts.activeRuns > 0 {
+		ts.activeRuns--
+	}
+	if ts.activeRuns > 0 {
+		return
+	}
 	ts.task.Running = false
 	ts.task.Stopping = false
 	ts.task.RunningModels = nil
 	ts.task.FinishedAt = time.Now().Format(time.RFC3339)
-	ts.cancel = nil
+	ts.cancels = nil
 }
 
 func (ts *taskStore) fail(taskID int64, message string) {
@@ -392,7 +426,17 @@ func (ts *taskStore) fail(taskID int64, message string) {
 	ts.task.RunningModels = nil
 	ts.task.Error = message
 	ts.task.FinishedAt = time.Now().Format(time.RFC3339)
-	ts.cancel = nil
+	ts.cancels = nil
+	ts.activeRuns = 0
+}
+
+func (ts *taskStore) loopCountForModel(model string) int {
+	if ts.task.LoopCounts != nil {
+		if loopCount := ts.task.LoopCounts[model]; loopCount > 0 {
+			return loopCount
+		}
+	}
+	return ts.task.LoopCount
 }
 
 func (ts *taskStore) prependLogLocked(res alive.Result) {
@@ -409,6 +453,27 @@ func initialRunningResults(models []string) []alive.Result {
 		results = append(results, alive.Result{Model: model, Attempts: 1})
 	}
 	return results
+}
+
+func loopCountsFor(models []string, loopCount int) map[string]int {
+	loopCounts := make(map[string]int, len(models))
+	for _, model := range models {
+		loopCounts[model] = loopCount
+	}
+	return loopCounts
+}
+
+func firstRunningModel(running, requested []string) string {
+	active := make(map[string]struct{}, len(running))
+	for _, model := range running {
+		active[model] = struct{}{}
+	}
+	for _, model := range requested {
+		if _, ok := active[model]; ok {
+			return model
+		}
+	}
+	return ""
 }
 
 func displayAttemptResult(res alive.Result, loopCount int) alive.Result {
@@ -443,6 +508,12 @@ func cloneTask(task probeTask) probeTask {
 	task.RunningModels = append([]string(nil), task.RunningModels...)
 	task.Results = append([]alive.Result(nil), task.Results...)
 	task.Logs = append([]probeLogEntry(nil), task.Logs...)
+	if task.LoopCounts != nil {
+		task.LoopCounts = make(map[string]int, len(task.LoopCounts))
+		for model, loopCount := range task.LoopCounts {
+			task.LoopCounts[model] = loopCount
+		}
+	}
 	return task
 }
 

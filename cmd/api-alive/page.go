@@ -418,7 +418,7 @@ const indexHTML = `<!doctype html>
         state.editing = false;
         state.draftModels = [];
       }
-      $('runSelectedBtn').disabled = value || state.editing || state.selected.size === 0;
+      $('runSelectedBtn').disabled = state.editing || runnableSelectedModels().length === 0;
       $('runSelectedBtn').hidden = state.editing;
       $('selectAllLabel').hidden = state.editing;
       $('addForm').hidden = !state.editing;
@@ -429,7 +429,7 @@ const indexHTML = `<!doctype html>
       $('editModelsBtn').className = state.editing ? '' : 'secondary';
       $('stopProbeBtn').disabled = !value || state.task?.stopping;
       $('stopProbeBtn').textContent = state.task?.stopping ? 'Stopping...' : 'Stop task';
-      document.querySelectorAll('[data-run-one]').forEach(btn => btn.disabled = value || state.editing);
+      document.querySelectorAll('[data-run-one]').forEach(btn => btn.disabled = state.editing || state.runningModels.has(btn.dataset.runOne) || state.task?.stopping);
       document.querySelectorAll('[data-move]').forEach(btn => { btn.disabled = value || btn.dataset.boundary === 'true'; });
       renderRunningModels();
     }
@@ -464,7 +464,7 @@ const indexHTML = `<!doctype html>
     }
     function updateSelectedCount() {
       $('selectedCount').textContent = state.editing ? 'Editing' : state.selected.size + ' selected';
-      $('runSelectedBtn').disabled = state.running || state.editing || state.selected.size === 0;
+      $('runSelectedBtn').disabled = state.editing || runnableSelectedModels().length === 0;
       $('runSelectedBtn').hidden = state.editing;
       $('selectAllLabel').hidden = state.editing;
       $('addForm').hidden = !state.editing;
@@ -476,6 +476,9 @@ const indexHTML = `<!doctype html>
       const models = visibleModels();
       $('selectAll').checked = models.length > 0 && state.selected.size === models.length;
       $('selectAll').indeterminate = state.selected.size > 0 && state.selected.size < models.length;
+    }
+    function runnableSelectedModels() {
+      return [...state.selected].filter(model => !state.runningModels.has(model));
     }
     function statusPill(model) {
       if (state.runningModels.has(model)) return '<span class="pill run"><span class="live-dot"></span>Running</span>';
@@ -640,8 +643,8 @@ const indexHTML = `<!doctype html>
       setMessage('Edit cancelled.');
     }
     async function startProbe(models) {
-      models = [...new Set(models)].filter(Boolean);
-      if (!models.length || state.running || state.editing) return;
+      models = [...new Set(models)].filter(model => model && !state.runningModels.has(model));
+      if (!models.length || state.editing || state.task?.stopping) return;
       const data = await request('/api/probe', { method: 'POST', body: JSON.stringify({ models }) });
       applyTask(data.task);
       setMessage('Probe task started.');
