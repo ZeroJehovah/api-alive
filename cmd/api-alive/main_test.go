@@ -68,11 +68,16 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`editing: false`,
 		`draftModels: []`,
 		`draftModelLoopCounts: {}`,
+		`dirtyLoopCounts: new Set()`,
 		`editLockedModels: new Set()`,
 		`state.editLockedModels = new Set(state.runningModels)`,
 		`state.editLockedModels.has(model)`,
 		`Running when editing started`,
 		`function loopCountInput`,
+		`function mergeDirtyLoopCounts`,
+		`state.config = mergeDirtyLoopCounts(data.config);`,
+		`state.dirtyLoopCounts.add(input.dataset.loopCount);`,
+		`clearDirtyLoopCounts(models);`,
 		`maxlength="4"`,
 		`.loop-count-input`,
 		`model_loop_counts`,
@@ -90,6 +95,12 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		if !strings.Contains(indexHTML, want) {
 			t.Fatalf("indexHTML missing %q", want)
 		}
+	}
+}
+
+func TestIndexHTMLAllowsRetryInputWhileRunning(t *testing.T) {
+	if strings.Contains(indexHTML, `state.runningModels.has(input.dataset.loopCount)`) {
+		t.Fatal("running models must not disable retries input")
 	}
 }
 
