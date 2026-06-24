@@ -315,6 +315,7 @@ const indexHTML = `<!doctype html>
           <h2>Runtime</h2>
           <div class="header-actions">
             <button class="secondary" id="reloadBtn">Refresh</button>
+            <button class="secondary" id="notificationBtn" type="button">Enable alerts</button>
             <button id="saveConfigBtn">Save runtime</button>
           </div>
         </header>
@@ -384,7 +385,7 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {}, editLockedModels: new Set() };
+    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {}, editLockedModels: new Set(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set() };
     const maxLogEntries = 100;
     const idlePollMS = 60000;
     const runningPollMS = 5000;
@@ -405,6 +406,87 @@ const indexHTML = `<!doctype html>
         twoDigits(date.getHours()) + ':' + twoDigits(date.getMinutes()) + ':' + twoDigits(date.getSeconds());
     }
     function visibleModels() { return state.editing ? state.draftModels : (state.config?.models || []); }
+    function notificationsSupported() { return 'Notification' in window; }
+    function notificationPermission() { return notificationsSupported() ? Notification.permission : 'unsupported'; }
+    function updateNotificationButton() {
+      const btn = $('notificationBtn');
+      if (!btn) return;
+      const permission = notificationPermission();
+      if (permission === 'unsupported') {
+        btn.textContent = 'Alerts unavailable';
+        btn.disabled = true;
+        btn.title = 'Browser notifications are unavailable in this browser or context.';
+      } else if (permission === 'granted') {
+        btn.textContent = 'Alerts on';
+        btn.disabled = false;
+        btn.title = 'Background success notifications are enabled.';
+      } else if (permission === 'denied') {
+        btn.textContent = 'Alerts blocked';
+        btn.disabled = true;
+        btn.title = 'Browser notifications are blocked for this site.';
+      } else {
+        btn.textContent = 'Enable alerts';
+        btn.disabled = false;
+        btn.title = 'Enable browser notifications for background successes.';
+      }
+    }
+    async function requestNotificationPermission() {
+      if (!notificationsSupported()) {
+        setMessage('Browser notifications are unavailable.');
+        updateNotificationButton();
+        return false;
+      }
+      if (Notification.permission === 'granted') {
+        updateNotificationButton();
+        return true;
+      }
+      if (Notification.permission === 'denied') {
+        setMessage('Browser notifications are blocked for this site.');
+        updateNotificationButton();
+        return false;
+      }
+      const permission = await Notification.requestPermission();
+      updateNotificationButton();
+      setMessage(permission === 'granted' ? 'Background alerts enabled.' : 'Background alerts not enabled.');
+      return permission === 'granted';
+    }
+    function successLogKey(entry) {
+      const res = entry.result || entry;
+      return [entry.time || '', res.model || '', res.attempts || '', res.duration_ms || ''].join('|');
+    }
+    function successfulLogEntries(task) {
+      return (task?.logs || []).filter(entry => {
+        const res = entry.result || entry;
+        return res?.success && res.model;
+      });
+    }
+    function recordSuccessLogEntries(entries) {
+      entries.forEach(entry => state.notifiedSuccessLogKeys.add(successLogKey(entry)));
+    }
+    function notifySuccessEntries(entries) {
+      if (!entries.length || !document.hidden || notificationPermission() !== 'granted') return;
+      const newest = entries[0].result || entries[0];
+      const title = entries.length === 1 ? 'API Alive success' : 'API Alive successes';
+      const body = entries.length === 1
+        ? newest.model + ' succeeded in ' + displaySeconds(newest.duration_ms) + 's'
+        : entries.length + ' models succeeded. Latest: ' + newest.model;
+      try {
+        new Notification(title, { body, tag: 'api-alive-success' });
+      } catch (err) {
+        console.warn('notification failed', err);
+      }
+    }
+    function handleSuccessNotifications(task) {
+      const successes = successfulLogEntries(task);
+      if (!state.successNotificationsPrimed) {
+        recordSuccessLogEntries(successes);
+        state.successNotificationsPrimed = true;
+        return;
+      }
+      const fresh = successes.filter(entry => !state.notifiedSuccessLogKeys.has(successLogKey(entry)));
+      recordSuccessLogEntries(fresh);
+      notifySuccessEntries(fresh);
+    }
     function schedulePoll() {
       clearTimeout(pollTimer);
       pollTimer = setTimeout(() => pollState().catch(err => {
@@ -578,6 +660,7 @@ const indexHTML = `<!doctype html>
       $('maxOutputChars').value = config.max_output_chars || 4000;
     }
     function applyTask(task) {
+      handleSuccessNotifications(task || {});
       state.task = task || {};
       state.running = !!state.task.running;
       state.runningModels = new Set(state.task.running_models || []);
@@ -701,6 +784,7 @@ const indexHTML = `<!doctype html>
     }
 
     $('reloadBtn').addEventListener('click', () => loadState().catch(err => setMessage(err.message)));
+    $('notificationBtn').addEventListener('click', () => requestNotificationPermission().catch(err => setMessage(err.message)));
     $('saveConfigBtn').addEventListener('click', () => saveRuntime().catch(err => setMessage(err.message)));
     $('stopProbeBtn').addEventListener('click', () => stopProbe().catch(err => setMessage(err.message)));
     $('addForm').addEventListener('submit', event => { event.preventDefault(); addModel($('newModel').value).catch(err => setMessage(err.message)); });
@@ -714,6 +798,7 @@ const indexHTML = `<!doctype html>
     $('cancelEditBtn').addEventListener('click', () => cancelModelEdit());
     renderLog();
     renderRunningModels();
+    updateNotificationButton();
     loadState().catch(err => setMessage(err.message));
   </script>
 </body>
