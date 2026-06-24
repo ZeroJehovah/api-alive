@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunnerRetriesUntilExpectedOutputMatches(t *testing.T) {
@@ -152,6 +153,40 @@ func TestRunnerEmitsAttemptEventsBeforeFinalResult(t *testing.T) {
 	}
 	if got[2].Type != EventResult || got[2].Result.Attempts != 2 || len(got[2].Result.AttemptResults) != 2 {
 		t.Fatalf("final event = %#v, want aggregate result with two attempts", got[2])
+	}
+}
+
+func TestRunnerCancelStopsAfterCurrentAttempt(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Models = []string{"a"}
+	cfg.LoopCount = 3
+	cfg.TimeoutSeconds = 10
+	r := Runner{
+		Config:         cfg,
+		commandBuilder: staticCommand("sleep 5"),
+		Prompts:        []PromptCase{{Input: "Say OK.", Expected: "OK"}},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	timer := time.AfterFunc(50*time.Millisecond, cancel)
+	defer timer.Stop()
+
+	events, err := r.RunEvents(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []Event
+	for event := range events {
+		got = append(got, event)
+	}
+	if len(got) != 2 {
+		t.Fatalf("event count = %d, want 2: %#v", len(got), got)
+	}
+	if got[0].Type != EventAttempt || got[0].Result.Attempts != 1 || got[0].Result.Error != context.Canceled.Error() {
+		t.Fatalf("attempt event = %#v, want canceled attempt 1", got[0])
+	}
+	if got[1].Type != EventResult || got[1].Result.Attempts != 1 || len(got[1].Result.AttemptResults) != 1 {
+		t.Fatalf("final event = %#v, want one canceled attempt", got[1])
 	}
 }
 
