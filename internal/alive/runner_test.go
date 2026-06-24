@@ -10,7 +10,7 @@ import (
 func TestRunnerRetriesUntilExpectedOutputMatches(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Models = []string{"a"}
-	cfg.LoopCount = 3
+	cfg.ModelLoopCounts = map[string]int{"a": 3}
 	r := Runner{
 		Config:         cfg,
 		commandBuilder: staticCommand(`n=$(cat tries 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > tries; if [ "$n" -lt 3 ]; then echo NO; else echo OK; fi`),
@@ -33,7 +33,7 @@ func TestRunnerRetriesUntilExpectedOutputMatches(t *testing.T) {
 func TestRunnerReportsConfiguredAttemptsAfterAllFailures(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Models = []string{"a"}
-	cfg.LoopCount = 2
+	cfg.ModelLoopCounts = map[string]int{"a": 2}
 	r := Runner{
 		Config:         cfg,
 		commandBuilder: staticCommand("echo NO"),
@@ -127,7 +127,7 @@ func TestRunnerFailsWhenExpectedOutputIsMissing(t *testing.T) {
 func TestRunnerEmitsAttemptEventsBeforeFinalResult(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Models = []string{"a"}
-	cfg.LoopCount = 2
+	cfg.ModelLoopCounts = map[string]int{"a": 2}
 	r := Runner{
 		Config:         cfg,
 		commandBuilder: staticCommand(`n=$(cat tries 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > tries; if [ "$n" -lt 2 ]; then echo NO; else echo OK; fi`),
@@ -159,7 +159,7 @@ func TestRunnerEmitsAttemptEventsBeforeFinalResult(t *testing.T) {
 func TestRunnerCancelStopsAfterCurrentAttempt(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Models = []string{"a"}
-	cfg.LoopCount = 3
+	cfg.ModelLoopCounts = map[string]int{"a": 3}
 	cfg.TimeoutSeconds = 10
 	r := Runner{
 		Config:         cfg,

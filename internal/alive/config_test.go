@@ -20,3 +20,26 @@ func TestRemoveModelsRemovesConfiguredModels(t *testing.T) {
 		t.Fatalf("RemoveModels() = %#v, want %#v", got, want)
 	}
 }
+
+func TestConfigMigratesLegacyLoopCountToPerModelCounts(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Models = []string{"a", "b"}
+	cfg.LoopCount = 3
+	cfg.ApplyDefaults()
+	if cfg.LoopCount != 0 {
+		t.Fatalf("legacy loop count = %d, want 0", cfg.LoopCount)
+	}
+	if cfg.ModelLoopCounts["a"] != 3 || cfg.ModelLoopCounts["b"] != 3 {
+		t.Fatalf("model loop counts = %#v, want both 3", cfg.ModelLoopCounts)
+	}
+}
+
+func TestConfigDefaultsNewModelLoopCountToOne(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Models = []string{"a", "b"}
+	cfg.ModelLoopCounts = map[string]int{"a": 5}
+	cfg.ApplyDefaults()
+	if cfg.ModelLoopCounts["a"] != 5 || cfg.ModelLoopCounts["b"] != 1 {
+		t.Fatalf("model loop counts = %#v", cfg.ModelLoopCounts)
+	}
+}

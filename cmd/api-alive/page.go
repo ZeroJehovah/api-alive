@@ -155,14 +155,16 @@ const indexHTML = `<!doctype html>
     .model-table .model-heading { width: 30ch; }
     .model-table input[type="checkbox"] { width: 16px; height: 16px; min-height: 16px; padding: 0; display: block; }
     .model-table button.table-action { min-height: 24px; padding: 0 7px; }
+    .loop-count-input { width: 5ch; min-height: 24px; padding: 0 5px; text-align: center; font-size: 12px; }
     .model-editor .model-heading { width: auto; }
     .editor-actions { width: 150px; }
     .check { width: 34px; }
     .order { width: 92px; }
     .result { width: 96px; }
     .attempts { width: 78px; }
+    .retry-count { width: 58px; }
     .result-time { width: 154px; }
-    .row-actions { width: 70px; }
+    .row-actions { width: 112px; }
     .move-actions { display: flex; gap: 4px; }
     .pill {
       display: inline-flex;
@@ -323,14 +325,9 @@ const indexHTML = `<!doctype html>
           <label>Listen address
             <input id="listenAddr" placeholder="0.0.0.0:8080">
           </label>
-          <div class="row">
-            <label>Timeout seconds
-              <input id="timeoutSeconds" type="number" min="1" step="1">
-            </label>
-            <label>Loop count
-              <input id="loopCount" type="number" min="1" step="1">
-            </label>
-          </div>
+          <label>Timeout seconds
+            <input id="timeoutSeconds" type="number" min="1" step="1">
+          </label>
           <label>Max output chars
             <input id="maxOutputChars" type="number" min="1" step="1">
           </label>
@@ -387,7 +384,7 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [] };
+    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {} };
     const maxLogEntries = 100;
     const idlePollMS = 60000;
     const runningPollMS = 5000;
@@ -420,6 +417,7 @@ const indexHTML = `<!doctype html>
       if (value && state.editing) {
         state.editing = false;
         state.draftModels = [];
+        state.draftModelLoopCounts = {};
       }
       $('runSelectedBtn').disabled = state.editing || runnableSelectedModels().length === 0;
       $('runSelectedBtn').hidden = state.editing;
@@ -433,6 +431,7 @@ const indexHTML = `<!doctype html>
       $('stopProbeBtn').disabled = !value || state.task?.stopping;
       $('stopProbeBtn').textContent = state.task?.stopping ? 'Stopping...' : 'Stop task';
       document.querySelectorAll('[data-run-one]').forEach(btn => btn.disabled = state.editing || state.runningModels.has(btn.dataset.runOne) || state.task?.stopping);
+      document.querySelectorAll('[data-loop-count]').forEach(input => input.disabled = state.runningModels.has(input.dataset.loopCount) || state.task?.stopping);
       document.querySelectorAll('[data-move]').forEach(btn => { btn.disabled = value || btn.dataset.boundary === 'true'; });
       renderRunningModels();
     }
@@ -489,16 +488,34 @@ const indexHTML = `<!doctype html>
       if (!res) return '<span class="pill">Idle</span>';
       return res.success ? '<span class="pill ok">Success</span>' : '<span class="pill bad">Failed</span>';
     }
+    function normalizeLoopCount(value) {
+      const digits = String(value ?? '').replace(/\D/g, '').slice(0, 4);
+      const count = Number(digits) || 1;
+      return Math.max(1, Math.min(9999, count));
+    }
+    function modelLoopCounts() { return state.config?.model_loop_counts || {}; }
+    function loopCountFor(model) { return normalizeLoopCount(modelLoopCounts()[model] || 1); }
+    function draftLoopCountFor(model) { return normalizeLoopCount(state.draftModelLoopCounts[model] || 1); }
+    function loopCountsForModels(models, source) {
+      const out = {};
+      models.forEach(model => { out[model] = normalizeLoopCount((source || {})[model] || 1); });
+      return out;
+    }
+    function loopCountInput(model, value, draft) {
+      const attr = draft ? 'data-draft-loop-count' : 'data-loop-count';
+      return '<input class="loop-count-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" ' + attr + '="' + escapeText(model) + '" value="' + escapeText(normalizeLoopCount(value)) + '" title="Max attempts">';
+    }
     function renderModelEditor(models) {
       if (!models.length) {
         $('modelHost').innerHTML = '<div class="empty">No models configured.</div>';
         return;
       }
-      $('modelHost').innerHTML = '<table class="model-table model-editor"><thead><tr><th class="model-heading">Model</th><th class="editor-actions">Actions</th></tr></thead><tbody>' + models.map((model, index) => {
+      $('modelHost').innerHTML = '<table class="model-table model-editor"><thead><tr><th class="model-heading">Model</th><th class="retry-count">Retries</th><th class="editor-actions">Actions</th></tr></thead><tbody>' + models.map((model, index) => {
         const upDisabled = index === 0 ? 'disabled data-boundary="true"' : 'data-boundary="false"';
         const downDisabled = index === models.length - 1 ? 'disabled data-boundary="true"' : 'data-boundary="false"';
         return '<tr>' +
           '<td class="model" title="' + escapeText(model) + '">' + escapeText(model) + '</td>' +
+          '<td class="retry-count">' + loopCountInput(model, draftLoopCountFor(model), true) + '</td>' +
           '<td class="editor-actions"><div class="move-actions">' +
             '<button type="button" class="secondary table-action" data-move="up" data-model="' + escapeText(model) + '" ' + upDisabled + '>Up</button>' +
             '<button type="button" class="secondary table-action" data-move="down" data-model="' + escapeText(model) + '" ' + downDisabled + '>Down</button>' +
@@ -507,6 +524,10 @@ const indexHTML = `<!doctype html>
       }).join('') + '</tbody></table>';
       document.querySelectorAll('[data-move]').forEach(button => button.addEventListener('click', () => moveModel(button.dataset.model, button.dataset.move)));
       document.querySelectorAll('[data-delete-model]').forEach(button => button.addEventListener('click', () => deleteModel(button.dataset.deleteModel)));
+      document.querySelectorAll('[data-draft-loop-count]').forEach(input => input.addEventListener('input', () => {
+        input.value = String(input.value).replace(/\D/g, '').slice(0, 4);
+        state.draftModelLoopCounts[input.dataset.draftLoopCount] = normalizeLoopCount(input.value);
+      }));
     }
     function renderModels() {
       if (state.running && state.editing) {
@@ -524,7 +545,7 @@ const indexHTML = `<!doctype html>
         $('modelHost').innerHTML = '<div class="empty">No models configured.</div>';
         return;
       }
-      $('modelHost').innerHTML = '<table class="model-table"><thead><tr><th class="check"></th><th class="model-heading">Model</th><th class="result">Result</th><th class="attempts">Attempts</th><th class="result-time">Result time</th><th class="row-actions"></th></tr></thead><tbody>' + models.map((model) => {
+      $('modelHost').innerHTML = '<table class="model-table"><thead><tr><th class="check"></th><th class="model-heading">Model</th><th class="result">Result</th><th class="attempts">Attempts</th><th class="result-time">Result time</th><th class="retry-count">Retries</th><th class="row-actions"></th></tr></thead><tbody>' + models.map((model) => {
         const res = resultFor(model);
         const checked = state.selected.has(model) ? 'checked' : '';
         const resultTime = res ? displayDateTime(res.updated_at) : '';
@@ -532,11 +553,17 @@ const indexHTML = `<!doctype html>
         return '<tr><td class="check"><input data-select="' + escapeText(model) + '" type="checkbox" ' + checked + '></td>' +
           '<td class="model" title="' + escapeText(model) + '">' + escapeText(model) + '</td>' +
           '<td class="result">' + statusPill(model) + '</td><td class="attempts">' + escapeText(attempts) + '</td><td class="result-time">' + escapeText(resultTime) + '</td>' +
+          '<td class="retry-count">' + loopCountInput(model, loopCountFor(model), false) + '</td>' +
           '<td class="row-actions"><button type="button" class="secondary table-action" data-run-one="' + escapeText(model) + '">Run</button></td></tr>';
       }).join('') + '</tbody></table>';
       document.querySelectorAll('[data-select]').forEach(input => input.addEventListener('change', () => {
         input.checked ? state.selected.add(input.dataset.select) : state.selected.delete(input.dataset.select);
         updateSelectedCount();
+      }));
+      document.querySelectorAll('[data-loop-count]').forEach(input => input.addEventListener('input', () => {
+        input.value = String(input.value).replace(/\D/g, '').slice(0, 4);
+        if (!state.config.model_loop_counts) state.config.model_loop_counts = {};
+        state.config.model_loop_counts[input.dataset.loopCount] = normalizeLoopCount(input.value);
       }));
       document.querySelectorAll('[data-run-one]').forEach(button => button.addEventListener('click', () => startProbe([button.dataset.runOne]).catch(err => setMessage(err.message))));
       updateSelectedCount();
@@ -546,7 +573,6 @@ const indexHTML = `<!doctype html>
       $('codexCommand').value = config.codex_command || 'codex';
       $('listenAddr').value = config.listen_addr || '0.0.0.0:8080';
       $('timeoutSeconds').value = config.timeout_seconds || 120;
-      $('loopCount').value = config.loop_count || 1;
       $('maxOutputChars').value = config.max_output_chars || 4000;
     }
     function applyTask(task) {
@@ -584,7 +610,7 @@ const indexHTML = `<!doctype html>
       cfg.codex_command = $('codexCommand').value.trim() || 'codex';
       cfg.listen_addr = $('listenAddr').value.trim() || '0.0.0.0:8080';
       cfg.timeout_seconds = Number($('timeoutSeconds').value) || 120;
-      cfg.loop_count = Number($('loopCount').value) || 1;
+      cfg.model_loop_counts = loopCountsForModels(cfg.models || [], cfg.model_loop_counts || {});
       cfg.max_output_chars = Number($('maxOutputChars').value) || 4000;
       state.config = await request('/api/config', { method: 'POST', body: JSON.stringify(cfg) });
       fillForm(state.config);
@@ -595,7 +621,10 @@ const indexHTML = `<!doctype html>
     async function addModel(name) {
       name = name.trim();
       if (!name || !state.editing) return;
-      if (!state.draftModels.includes(name)) state.draftModels.push(name);
+      if (!state.draftModels.includes(name)) {
+        state.draftModels.push(name);
+        state.draftModelLoopCounts[name] = 1;
+      }
       $('newModel').value = '';
       renderModels();
       setMessage('Added ' + name);
@@ -603,6 +632,7 @@ const indexHTML = `<!doctype html>
     function deleteModel(model) {
       if (state.running || !state.editing) return;
       state.draftModels = state.draftModels.filter(existing => existing !== model);
+      delete state.draftModelLoopCounts[model];
       state.selected.delete(model);
       renderModels();
       setMessage('Removed ' + model);
@@ -623,14 +653,16 @@ const indexHTML = `<!doctype html>
       if (!state.editing) {
         state.editing = true;
         state.draftModels = [...(state.config.models || [])];
+        state.draftModelLoopCounts = loopCountsForModels(state.draftModels, state.config.model_loop_counts || {});
         state.selected = new Set();
         renderModels();
         setMessage('Editing models.');
         return;
       }
-      state.config = await request('/api/config', { method: 'POST', body: JSON.stringify({ ...state.config, models: state.draftModels }) });
+      state.config = await request('/api/config', { method: 'POST', body: JSON.stringify({ ...state.config, models: state.draftModels, model_loop_counts: loopCountsForModels(state.draftModels, state.draftModelLoopCounts) }) });
       state.editing = false;
       state.draftModels = [];
+      state.draftModelLoopCounts = {};
       state.selected = new Set([...state.selected].filter(model => state.config.models.includes(model)));
       $('newModel').value = '';
       renderModels();
@@ -641,6 +673,7 @@ const indexHTML = `<!doctype html>
       if (!state.editing) return;
       state.editing = false;
       state.draftModels = [];
+      state.draftModelLoopCounts = {};
       $('newModel').value = '';
       renderModels();
       setMessage('Edit cancelled.');
@@ -648,7 +681,8 @@ const indexHTML = `<!doctype html>
     async function startProbe(models) {
       models = [...new Set(models)].filter(model => model && !state.runningModels.has(model));
       if (!models.length || state.editing || state.task?.stopping) return;
-      const data = await request('/api/probe', { method: 'POST', body: JSON.stringify({ models }) });
+      const data = await request('/api/probe', { method: 'POST', body: JSON.stringify({ models, model_loop_counts: loopCountsForModels(models, state.config.model_loop_counts || {}) }) });
+      if (data.config) state.config = data.config;
       applyTask(data.task);
       setMessage('Probe task started.');
       schedulePoll();
