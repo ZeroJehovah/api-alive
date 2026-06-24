@@ -155,16 +155,16 @@ const indexHTML = `<!doctype html>
     .model-table .model-heading { width: 30ch; }
     .model-table input[type="checkbox"] { width: 16px; height: 16px; min-height: 16px; padding: 0; display: block; }
     .model-table button.table-action { min-height: 24px; padding: 0 7px; }
-    .loop-count-input { width: 5ch; min-height: 24px; padding: 0 5px; text-align: center; font-size: 12px; }
+    .loop-count-input { width: 6.5ch; min-width: 6.5ch; min-height: 24px; padding: 0 5px; text-align: center; font-size: 12px; }
     .model-editor .model-heading { width: auto; }
     .editor-actions { width: 150px; }
     .check { width: 34px; }
     .order { width: 92px; }
     .result { width: 118px; }
     .progress { width: 78px; }
-    .retry-count { width: 58px; }
+    .retry-count { width: 78px; }
     .result-time { width: 154px; }
-    .row-actions { width: 112px; }
+    .row-actions { width: 64px; }
     .move-actions { display: flex; gap: 4px; }
     .pill {
       display: inline-flex;
@@ -292,7 +292,7 @@ const indexHTML = `<!doctype html>
       .toolbar .actions button { flex: 1; }
       th.progress, td.progress, th.result-time, td.result-time { display: none; }
       .order { width: 86px; }
-      .row-actions { width: 68px; }
+      .row-actions { width: 64px; }
     }
   </style>
 </head>
