@@ -420,7 +420,7 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {}, dirtyLoopCounts: new Set(), editLockedModels: new Set(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Set(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), backgroundSuccessFavicon: false, faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
+    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {}, dirtyLoopCounts: new Set(), editLockedModels: new Set(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Set(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), failureFaviconPrimed: false, backgroundSuccessFavicon: false, backgroundFailedFavicon: false, handledFailureFaviconKey: '', faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
     const maxLogEntries = 100;
     const idlePollMS = 60000;
     const runningPollMS = 5000;
@@ -473,11 +473,16 @@ const indexHTML = `<!doctype html>
       const latest = latestTaskResult(task);
       return !!latest && latest.success === false;
     }
+    function failureFaviconKey(task) {
+      if (!taskFinishedWithFailure(task)) return '';
+      const latest = latestTaskResult(task);
+      return [task.id || '', task.finished_at || '', latest.model || '', latest.updated_at || '', latest.attempts || '', latest.duration_ms || '', latest.error || ''].join('|');
+    }
     function desiredFaviconStatus() {
       if (isPageForeground()) return state.running ? 'running' : 'idle';
       if (state.backgroundSuccessFavicon) return 'success';
       if (state.running) return 'running';
-      if (taskFinishedWithFailure(state.task)) return 'failed';
+      if (state.backgroundFailedFavicon) return 'failed';
       return 'idle';
     }
     function updateFavicon() {
@@ -488,7 +493,10 @@ const indexHTML = `<!doctype html>
       state.faviconStatus = status;
     }
     function handlePageAttentionChange() {
-      if (isPageForeground()) state.backgroundSuccessFavicon = false;
+      if (isPageForeground()) {
+        state.backgroundSuccessFavicon = false;
+        state.backgroundFailedFavicon = false;
+      }
       updateFavicon();
     }
     function notificationsSupported() { return 'Notification' in window; }
@@ -605,6 +613,17 @@ const indexHTML = `<!doctype html>
       recordSuccessLogEntries(fresh);
       if (fresh.length && !isPageForeground()) state.backgroundSuccessFavicon = true;
       notifySuccessEntries(fresh);
+    }
+    function handleFailureFavicon(task) {
+      const key = failureFaviconKey(task);
+      if (!state.failureFaviconPrimed) {
+        state.handledFailureFaviconKey = key;
+        state.failureFaviconPrimed = true;
+        return;
+      }
+      if (!key || key === state.handledFailureFaviconKey) return;
+      state.handledFailureFaviconKey = key;
+      if (!isPageForeground()) state.backgroundFailedFavicon = true;
     }
     function schedulePoll() {
       clearTimeout(pollTimer);
@@ -944,6 +963,7 @@ const indexHTML = `<!doctype html>
       task = reconcileOptimisticStops(task || {});
       task = reconcileOptimisticClearedResults(task || {});
       handleSuccessNotifications(task || {});
+      handleFailureFavicon(task || {});
       state.task = task || {};
       state.running = !!state.task.running;
       state.runningModels = new Set(state.task.running_models || []);
