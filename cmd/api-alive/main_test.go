@@ -61,9 +61,13 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`async function startProbe`,
 		`function runnableSelectedModels`,
 		`return [...state.selected].filter(model => model);`,
-		`btn.disabled = state.editing || state.task?.stopping`,
+		`btn.disabled = state.editing || !state.runningModels.has(btn.dataset.stopOne)`,
 		`async function stopProbe`,
-		`id="stopProbeBtn"`,
+		`id="clearResultsBtn"`,
+		`data-stop-one`,
+		`data-select-all`,
+		`Clear results`,
+		`/api/probe/results/clear`,
 		`class="header-actions"`,
 		`class="header-actions models-actions"`,
 		`.models-actions { flex: 1 1 auto; min-width: 0; }`,
@@ -74,8 +78,6 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`<span class="pill run"><span class="live-dot"></span>Running</span>`,
 		`id="editModelsBtn"`,
 		`id="cancelEditBtn"`,
-		`id="selectAllLabel"`,
-		`.select-all-label`,
 		`.add-form input, .add-form button`,
 		`flex: 1 1 320px`,
 		`editing: false`,
@@ -89,9 +91,13 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`function loopCountInput`,
 		`function mergeDirtyLoopCounts`,
 		`state.config = mergeDirtyLoopCounts(data.config);`,
-		`state.dirtyLoopCounts.add(input.dataset.loopCount);`,
+		`state.dirtyLoopCounts.add(model);`,
+		`replaceChildrenWithHTML(resultCell, statusPill(model));`,
+		`document.activeElement !== retryInput`,
 		`clearDirtyLoopCounts(models);`,
-		`maxlength="4"`,
+		`maxlength="2"`,
+		`loopCountLabel`,
+		`displayAttemptProgress`,
 		`.loop-count-input`,
 		`model_loop_counts`,
 		`<table class="model-table">`,
@@ -114,6 +120,26 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 func TestIndexHTMLAllowsRetryInputWhileRunning(t *testing.T) {
 	if strings.Contains(indexHTML, `state.runningModels.has(input.dataset.loopCount)`) {
 		t.Fatal("running models must not disable retries input")
+	}
+}
+
+func TestIndexHTMLMovesNotificationsToLogHeaderAndRemovesGlobalStop(t *testing.T) {
+	runtimeHeader := `<h2>Runtime</h2>
+          <div class="header-actions">
+            <button class="secondary" id="reloadBtn">Refresh</button>
+            <button id="saveConfigBtn">Save runtime</button>`
+	if !strings.Contains(indexHTML, runtimeHeader) {
+		t.Fatal("runtime header should contain refresh and save runtime only")
+	}
+	logHeader := `<h2>Log</h2>
+        </div>
+        <div class="header-actions">
+          <button class="alert-button alert-request" id="notificationBtn" type="button">Allow alerts</button>`
+	if !strings.Contains(indexHTML, logHeader) {
+		t.Fatal("notification button should be in the log header")
+	}
+	if strings.Contains(indexHTML, `id="stopProbeBtn"`) || strings.Contains(indexHTML, `Stop task`) {
+		t.Fatal("global stop task control must be removed")
 	}
 }
 
@@ -247,22 +273,22 @@ func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *tes
 	if !reflect.DeepEqual(snap.RunningModels, []string{"model-b", "model-c"}) {
 		t.Fatalf("running models = %#v", snap.RunningModels)
 	}
-	stopping, err := store.stop()
+	stopping, err := store.stopModels([]string{"model-b"})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !stopping.Stopping {
-		t.Fatalf("stop did not mark stopping: %#v", stopping)
 	}
 	select {
 	case <-ctx:
 	default:
-		t.Fatal("stop did not cancel first task context")
+		t.Fatal("stop did not cancel selected model-b context")
 	}
 	select {
 	case <-runCtxByModel(t, secondRuns, "model-c"):
+		t.Fatal("stop canceled unselected model-c context")
 	default:
-		t.Fatal("stop did not cancel second task context")
+	}
+	if !reflect.DeepEqual(stopping.RunningModels, []string{"model-b", "model-c"}) {
+		t.Fatalf("running models before canceled run finishes = %#v", stopping.RunningModels)
 	}
 	store.finishRun(task.ID, runIDByModel(t, runs, "model-b"), "model-b")
 	if !store.snapshot().Running {
@@ -305,6 +331,43 @@ func TestProbeTaskAttemptEventsUpdateDisplayedAttempt(t *testing.T) {
 	store.applyEvent(task.ID, runIDByModel(t, runs, "model-a"), alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 3, Success: false, DurationMS: 30}})
 	if got := resultByModel(store.snapshot().Results, "model-a").Attempts; got != 3 {
 		t.Fatalf("attempt after final failure = %d, want 3", got)
+	}
+}
+
+func TestProbeTaskUnlimitedAttemptEventsAdvanceDisplayedAttempt(t *testing.T) {
+	store := &taskStore{}
+	task, runs, err := store.start([]string{"model-a"}, map[string]int{"model-a": 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.applyEvent(task.ID, runIDByModel(t, runs, "model-a"), alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 1, Success: false, DurationMS: 10}})
+	if got := resultByModel(store.snapshot().Results, "model-a").Attempts; got != 2 {
+		t.Fatalf("unlimited attempt after first failure = %d, want 2", got)
+	}
+	if got := store.snapshot().Logs[0].LoopCount; got != 0 {
+		t.Fatalf("log loop count = %d, want 0", got)
+	}
+}
+
+func TestProbeTaskClearResultsKeepsRunningModels(t *testing.T) {
+	store := &taskStore{}
+	first, firstRuns, err := store.start([]string{"model-a"}, map[string]int{"model-a": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.applyEvent(first.ID, runIDByModel(t, firstRuns, "model-a"), alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 1, Success: true, DurationMS: 10}})
+	store.finishRun(first.ID, runIDByModel(t, firstRuns, "model-a"), "model-a")
+
+	second, _, err := store.start([]string{"model-b"}, map[string]int{"model-b": 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := store.clearResults()
+	if resultByModel(snap.Results, "model-a").Model != "" {
+		t.Fatalf("cleared finished model result: %#v", snap.Results)
+	}
+	if got := resultByModel(snap.Results, "model-b"); got.Model != "model-b" || got.Attempts != 1 {
+		t.Fatalf("running model result not kept after clear, task %d: %#v", second.ID, snap.Results)
 	}
 }
 
@@ -382,9 +445,19 @@ func TestProbeEndpointAllowsDistinctConcurrentRequestsRejectsDuplicateAndStops(t
 		t.Fatalf("restarted model attempts = %d, want 1", got)
 	}
 	rec = httptest.NewRecorder()
-	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/probe/stop", strings.NewReader(`{}`)))
+	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/probe/stop", strings.NewReader(`{"model":"model-a"}`)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("stop status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/probe/stop", strings.NewReader(`{}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty stop status = %d, want 400; body = %q", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/probe/results/clear", strings.NewReader(`{}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear results status = %d, body = %q", rec.Code, rec.Body.String())
 	}
 }
 

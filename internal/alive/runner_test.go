@@ -53,6 +53,29 @@ func TestRunnerReportsConfiguredAttemptsAfterAllFailures(t *testing.T) {
 	}
 }
 
+func TestRunnerZeroLoopCountRetriesUntilSuccess(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Models = []string{"a"}
+	cfg.ModelLoopCounts = map[string]int{"a": 0}
+	r := Runner{
+		Config:         cfg,
+		commandBuilder: staticCommand(`n=$(cat tries 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > tries; if [ "$n" -lt 4 ]; then echo NO; else echo OK; fi`),
+		Prompts:        []PromptCase{{Input: "Say OK.", Expected: "OK"}},
+	}
+
+	ch, err := r.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := <-ch
+	if !res.Success {
+		t.Fatalf("result failed: %#v", res)
+	}
+	if res.Attempts != 4 {
+		t.Fatalf("attempts = %d, want 4", res.Attempts)
+	}
+}
+
 func TestRunnerUsesLastErrorLineOnCommandFailure(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Models = []string{"a"}

@@ -43,3 +43,16 @@ func TestConfigDefaultsNewModelLoopCountToOne(t *testing.T) {
 		t.Fatalf("model loop counts = %#v", cfg.ModelLoopCounts)
 	}
 }
+
+func TestConfigPreservesZeroLoopCountAndClampsToTwoDigits(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Models = []string{"a", "b", "c"}
+	cfg.ModelLoopCounts = map[string]int{"a": 0, "b": 120, "c": -2}
+	cfg.ApplyDefaults()
+	if cfg.ModelLoopCounts["a"] != 0 || cfg.ModelLoopCounts["b"] != 99 || cfg.ModelLoopCounts["c"] != 1 {
+		t.Fatalf("model loop counts = %#v, want a=0 b=99 c=1", cfg.ModelLoopCounts)
+	}
+	if got := cfg.LoopCountForModel("a"); got != 0 {
+		t.Fatalf("LoopCountForModel(a) = %d, want 0", got)
+	}
+}
