@@ -35,6 +35,12 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`Success (' + escapeText(displaySeconds(res.duration_ms)) + 's)`,
 		`idlePollMS = 60000`,
 		`runningPollMS = 5000`,
+		`let taskEventSource = null`,
+		`function connectTaskStream`,
+		`new EventSource('/api/events')`,
+		`applyTask(JSON.parse(event.data) || {})`,
+		`connectTaskStream();`,
+		`window.addEventListener('beforeunload', closeTaskStream);`,
 		`id="notificationBtn"`,
 		`Allow alerts`,
 		`class="alert-button alert-request"`,
@@ -403,6 +409,34 @@ func TestProbeTaskJSONIncludesLoopCounts(t *testing.T) {
 	}
 }
 
+func TestProbeTaskSubscribersReceiveTaskUpdates(t *testing.T) {
+	store := &taskStore{}
+	updates, unsubscribe := store.subscribe()
+	defer unsubscribe()
+
+	if initial := readTaskUpdate(t, updates); initial.Running || initial.ID != 0 {
+		t.Fatalf("initial task update = %#v", initial)
+	}
+	task, runs, err := store.start([]string{"model-a"}, map[string]int{"model-a": 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := readTaskUpdate(t, updates)
+	if !started.Running || started.ID != task.ID || !reflect.DeepEqual(started.RunningModels, []string{"model-a"}) {
+		t.Fatalf("started update = %#v", started)
+	}
+	store.applyEvent(task.ID, runIDByModel(t, runs, "model-a"), alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 1, Success: false, DurationMS: 10}})
+	attempted := readTaskUpdate(t, updates)
+	if len(attempted.Logs) != 1 || attempted.Logs[0].Result.Model != "model-a" {
+		t.Fatalf("attempt update = %#v", attempted)
+	}
+	store.finishRun(task.ID, runIDByModel(t, runs, "model-a"), "model-a")
+	finished := readTaskUpdate(t, updates)
+	if finished.Running || finished.FinishedAt == "" {
+		t.Fatalf("finished update = %#v", finished)
+	}
+}
+
 func TestProbeTaskAttemptEventsUpdateDisplayedAttempt(t *testing.T) {
 	store := &taskStore{}
 	task, runs, err := store.start([]string{"model-a"}, map[string]int{"model-a": 3})
@@ -597,4 +631,18 @@ func resultByModel(results []alive.Result, model string) alive.Result {
 		}
 	}
 	return alive.Result{}
+}
+
+func readTaskUpdate(t *testing.T, updates <-chan probeTask) probeTask {
+	t.Helper()
+	select {
+	case task, ok := <-updates:
+		if !ok {
+			t.Fatal("task update channel closed")
+		}
+		return task
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for task update")
+		return probeTask{}
+	}
 }
