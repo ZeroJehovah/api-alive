@@ -178,6 +178,26 @@ func TestIndexHTMLAllowsRetryInputWhileRunning(t *testing.T) {
 	}
 }
 
+func TestIndexHTMLOptimisticallyClearsResults(t *testing.T) {
+	for _, want := range []string{
+		`optimisticClearedResults: new Set()`,
+		`function optimisticClearResults`,
+		`const running = new Set(state.runningModels);`,
+		`const keptResults = currentTask.results.filter(res => running.has(res.model));`,
+		`state.optimisticClearedResults.add(res.model);`,
+		`function reconcileOptimisticClearedResults`,
+		`task = reconcileOptimisticClearedResults(task || {});`,
+		`state.optimisticClearedResults.delete(model);`,
+		`optimisticClearResults();`,
+		`restoreClientState(previous);`,
+		`await pollState().catch(refreshErr => setMessage(refreshErr.message));`,
+	} {
+		if !strings.Contains(indexHTML, want) {
+			t.Fatalf("indexHTML missing optimistic clear behavior %q", want)
+		}
+	}
+}
+
 func TestIndexHTMLMovesNotificationsToLogHeaderAndRemovesGlobalStop(t *testing.T) {
 	runtimeHeader := `<h2>Runtime</h2>
           <div class="header-actions">
