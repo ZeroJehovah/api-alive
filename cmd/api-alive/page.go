@@ -420,7 +420,7 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {}, dirtyLoopCounts: new Set(), editLockedModels: new Set(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), backgroundSuccessFavicon: false, faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
+    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {}, dirtyLoopCounts: new Set(), editLockedModels: new Set(), optimisticStops: new Map(), localStopLogs: new Map(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), backgroundSuccessFavicon: false, faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
     const maxLogEntries = 100;
     const idlePollMS = 60000;
     const runningPollMS = 5000;
@@ -611,7 +611,7 @@ const indexHTML = `<!doctype html>
       pollTimer = setTimeout(() => pollState().catch(err => {
         setMessage(err.message);
         schedulePoll();
-      }), state.running ? runningPollMS : idlePollMS);
+      }), state.running || state.optimisticStops.size > 0 ? runningPollMS : idlePollMS);
     }
     function setBusy(value) {
       state.running = value;
@@ -941,12 +941,37 @@ const indexHTML = `<!doctype html>
       $('maxOutputChars').value = config.max_output_chars || 4000;
     }
     function applyTask(task) {
+      task = reconcileOptimisticStops(task || {});
       handleSuccessNotifications(task || {});
       state.task = task || {};
       state.running = !!state.task.running;
       state.runningModels = new Set(state.task.running_models || []);
       state.results = new Map((state.task.results || []).map(res => [res.model, res]));
       state.logEntries = (state.task.logs || []).slice(0, maxLogEntries);
+      renderLog();
+      renderRunningModels();
+      renderModels();
+      updateFavicon();
+    }
+    function snapshotClientState() {
+      return {
+        task: state.task,
+        running: state.running,
+        runningModels: new Set(state.runningModels),
+        results: new Map(state.results),
+        logEntries: [...state.logEntries],
+        optimisticStops: new Map(state.optimisticStops),
+        localStopLogs: new Map(state.localStopLogs),
+      };
+    }
+    function restoreClientState(snapshot) {
+      state.task = snapshot.task;
+      state.running = snapshot.running;
+      state.runningModels = new Set(snapshot.runningModels);
+      state.results = new Map(snapshot.results);
+      state.logEntries = [...snapshot.logEntries];
+      state.optimisticStops = new Map(snapshot.optimisticStops);
+      state.localStopLogs = new Map(snapshot.localStopLogs);
       renderLog();
       renderRunningModels();
       renderModels();
@@ -959,6 +984,7 @@ const indexHTML = `<!doctype html>
       fillForm(state.config);
       applyTask(data.task || {});
       if (state.running) setMessage('Running ' + state.runningModels.size + ' model(s)...');
+      else if (state.optimisticStops.size > 0) setMessage('Stopping ' + state.optimisticStops.size + ' model(s)...');
       else if (state.task?.id && state.task.error) setMessage('Last task failed: ' + state.task.error);
       else if (state.task?.id && state.task.finished_at) setMessage('Last task finished. ' + state.config.models.length + ' configured model(s)');
       else setMessage(state.config.models.length + ' configured model(s)');
@@ -1009,6 +1035,68 @@ const indexHTML = `<!doctype html>
       renderRunningModels();
       renderModels();
       updateFavicon();
+    }
+    function clientTaskCopy(task) {
+      return {
+        ...(task || {}),
+        models: [...(task?.models || [])],
+        running_models: [...(task?.running_models || [])],
+        results: [...(task?.results || [])],
+        logs: [...(task?.logs || [])],
+        loop_counts: { ...(task?.loop_counts || {}) },
+      };
+    }
+    function canceledResultFor(model) {
+      const res = resultFor(model) || {};
+      const timestamp = new Date().toISOString();
+      return {
+        model,
+        success: false,
+        attempts: displayAttemptNumber(res.attempts || 1),
+        duration_ms: 0,
+        error: 'context canceled',
+        updated_at: timestamp,
+      };
+    }
+    function upsertClientResult(results, result) {
+      const next = [...(results || [])];
+      const index = next.findIndex(res => res.model === result.model);
+      if (index >= 0) next[index] = result;
+      else next.push(result);
+      return next;
+    }
+    function isCanceledLogFor(entry, model) {
+      const res = entry?.result || entry;
+      return res?.model === model && res.success === false && res.error === 'context canceled';
+    }
+    function reconcileOptimisticStops(task) {
+      const next = clientTaskCopy(task);
+      state.localStopLogs.forEach((entry, model) => {
+        if (next.logs.some(log => isCanceledLogFor(log, model))) {
+          state.localStopLogs.delete(model);
+          return;
+        }
+        next.results = upsertClientResult(next.results, entry.result);
+        next.logs = [entry, ...next.logs.filter(log => !isCanceledLogFor(log, model))].slice(0, maxLogEntries);
+      });
+      state.optimisticStops.forEach((entry, model) => {
+        const stillRunning = next.running_models.includes(model);
+        if (!stillRunning) {
+          state.optimisticStops.delete(model);
+          return;
+        }
+        next.running_models = next.running_models.filter(runningModel => runningModel !== model);
+        next.results = upsertClientResult(next.results, entry.result);
+      });
+      next.running = next.running_models.length > 0;
+      return next;
+    }
+    function optimisticStopProbe(model) {
+      const result = canceledResultFor(model);
+      const entry = { time: result.updated_at, loop_count: activeLoopCountFor(model), result };
+      state.optimisticStops.set(model, entry);
+      state.localStopLogs.set(model, entry);
+      applyTask(state.task || {});
     }
     async function saveRuntime() {
       const cfg = { ...state.config };
@@ -1091,6 +1179,10 @@ const indexHTML = `<!doctype html>
     async function startProbe(models) {
       models = [...new Set(models)].filter(model => model);
       if (!models.length || state.editing) return;
+      models.forEach(model => {
+        state.optimisticStops.delete(model);
+        state.localStopLogs.delete(model);
+      });
       const loopCounts = loopCountsForModels(models, state.config.model_loop_counts || {});
       optimisticStartProbe(models, loopCounts);
       setMessage('Starting ' + models.length + ' model(s)...');
@@ -1109,10 +1201,20 @@ const indexHTML = `<!doctype html>
     }
     async function stopProbe(model) {
       if (!state.runningModels.has(model)) return;
-      const data = await request('/api/probe/stop', { method: 'POST', body: JSON.stringify({ model }) });
-      applyTask(data.task);
+      const previous = snapshotClientState();
+      optimisticStopProbe(model);
       setMessage('Stopping ' + model + '...');
       schedulePoll();
+      try {
+        const data = await request('/api/probe/stop', { method: 'POST', body: JSON.stringify({ model }) });
+        applyTask(data.task);
+        setMessage('Stopping ' + model + '...');
+        schedulePoll();
+      } catch (err) {
+        restoreClientState(previous);
+        await pollState().catch(refreshErr => setMessage(refreshErr.message));
+        throw err;
+      }
     }
     async function clearResults() {
       const data = await request('/api/probe/results/clear', { method: 'POST', body: '{}' });
