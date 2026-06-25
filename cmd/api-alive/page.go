@@ -70,7 +70,7 @@ const indexHTML = `<!doctype html>
     }
     input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15, 118, 110, .12); }
     label { font-size: 12px; color: var(--muted); display: grid; gap: 6px; }
-    .app { max-width: 1180px; margin: 0 auto; padding: 24px; }
+    .app { max-width: 1280px; margin: 0 auto; padding: 24px; }
     .top {
       display: flex;
       align-items: flex-start;
@@ -84,10 +84,11 @@ const indexHTML = `<!doctype html>
     .status strong { color: var(--text); }
     .grid {
       display: grid;
-      grid-template-columns: 320px 1fr;
+      grid-template-columns: 320px minmax(0, 1fr);
       gap: 18px;
       align-items: start;
     }
+    .grid > .panel { min-width: 0; }
     .panel {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -455,9 +456,9 @@ const indexHTML = `<!doctype html>
       if (faviconCache[status]) return faviconCache[status];
       const color = faviconColors[status] || faviconColors.idle;
       const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">' +
-        '<rect x="2" y="2" width="28" height="28" rx="6" fill="#1e293b"/>' +
-        '<circle cx="16" cy="16" r="7" fill="' + color.fill + '"/>' +
-        '<circle cx="14" cy="14" r="2.5" fill="' + color.highlight + '" opacity="0.8"/>' +
+        '<rect x="0" y="0" width="32" height="32" rx="7" fill="#1e293b"/>' +
+        '<circle cx="16" cy="16" r="9" fill="' + color.fill + '"/>' +
+        '<circle cx="13.5" cy="13.5" r="3" fill="' + color.highlight + '" opacity="0.8"/>' +
         '</svg>';
       faviconCache[status] = 'data:image/svg+xml,' + encodeURIComponent(svg);
       return faviconCache[status];
@@ -971,6 +972,44 @@ const indexHTML = `<!doctype html>
     }
     async function loadState() { setMessage('Loading...'); applyServerState(await request('/api/state')); }
     async function pollState() { applyServerState(await request('/api/state')); }
+    function orderedModelNames(models) {
+      const wanted = new Set(models);
+      const ordered = [];
+      (state.config?.models || []).forEach(model => {
+        if (wanted.has(model)) {
+          ordered.push(model);
+          wanted.delete(model);
+        }
+      });
+      models.forEach(model => {
+        if (wanted.has(model)) {
+          ordered.push(model);
+          wanted.delete(model);
+        }
+      });
+      return ordered;
+    }
+    function optimisticStartProbe(models, loopCounts) {
+      const currentTask = state.task || {};
+      const taskModels = [...(currentTask.models || [])];
+      models.forEach(model => {
+        if (!taskModels.includes(model)) taskModels.push(model);
+      });
+      const runningModels = orderedModelNames([...state.runningModels, ...models]);
+      const nextResults = new Map(state.results);
+      models.forEach(model => nextResults.set(model, { model, attempts: 1 }));
+      const nextLoopCounts = { ...(currentTask.loop_counts || {}) };
+      models.forEach(model => {
+        nextLoopCounts[model] = normalizeLoopCount(loopCounts[model]);
+      });
+      state.task = { ...currentTask, running: true, models: taskModels, running_models: runningModels, results: [...nextResults.values()], logs: currentTask.logs || [], loop_counts: nextLoopCounts, finished_at: '', error: '' };
+      state.running = true;
+      state.runningModels = new Set(runningModels);
+      state.results = nextResults;
+      renderRunningModels();
+      renderModels();
+      updateFavicon();
+    }
     async function saveRuntime() {
       const cfg = { ...state.config };
       cfg.codex_command = $('codexCommand').value.trim() || 'codex';
@@ -1052,12 +1091,21 @@ const indexHTML = `<!doctype html>
     async function startProbe(models) {
       models = [...new Set(models)].filter(model => model);
       if (!models.length || state.editing) return;
-      const data = await request('/api/probe', { method: 'POST', body: JSON.stringify({ models, model_loop_counts: loopCountsForModels(models, state.config.model_loop_counts || {}) }) });
-      clearDirtyLoopCounts(models);
-      if (data.config) state.config = mergeDirtyLoopCounts(data.config);
-      applyTask(data.task);
-      setMessage('Probe task started.');
+      const loopCounts = loopCountsForModels(models, state.config.model_loop_counts || {});
+      optimisticStartProbe(models, loopCounts);
+      setMessage('Starting ' + models.length + ' model(s)...');
       schedulePoll();
+      try {
+        const data = await request('/api/probe', { method: 'POST', body: JSON.stringify({ models, model_loop_counts: loopCounts }) });
+        clearDirtyLoopCounts(models);
+        if (data.config) state.config = mergeDirtyLoopCounts(data.config);
+        applyTask(data.task);
+        setMessage('Probe task started.');
+        schedulePoll();
+      } catch (err) {
+        await pollState().catch(refreshErr => setMessage(refreshErr.message));
+        throw err;
+      }
     }
     async function stopProbe(model) {
       if (!state.runningModels.has(model)) return;
