@@ -517,15 +517,22 @@ const indexHTML = `<!doctype html>
     function recordSuccessLogEntries(entries) {
       entries.forEach(entry => state.notifiedSuccessLogKeys.add(successLogKey(entry)));
     }
+    function isPageForeground() {
+      return document.visibilityState === 'visible' && document.hasFocus();
+    }
     function notifySuccessEntries(entries) {
-      if (!entries.length || !document.hidden || notificationPermission() !== 'granted') return;
+      if (!entries.length || isPageForeground() || notificationPermission() !== 'granted') return;
       const newest = entries[0].result || entries[0];
-      const title = entries.length === 1 ? 'API Alive success' : 'API Alive successes';
+      const models = entries.map(entry => (entry.result || entry).model).filter(Boolean);
+      const title = entries.length === 1 ? 'API Alive success' : 'API Alive: ' + entries.length + ' successes';
       const body = entries.length === 1
         ? newest.model + ' succeeded in ' + displaySeconds(newest.duration_ms) + 's'
-        : entries.length + ' models succeeded. Latest: ' + newest.model;
+        : 'New successes: ' + models.join(', ');
       try {
-        new Notification(title, { body, tag: 'api-alive-success' });
+        new Notification(title, {
+          body,
+          requireInteraction: true,
+        });
       } catch (err) {
         console.warn('notification failed', err);
       }
