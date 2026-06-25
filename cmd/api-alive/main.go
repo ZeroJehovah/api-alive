@@ -52,6 +52,10 @@ type probeRequest struct {
 	Stream          bool           `json:"stream"`
 }
 
+type stopProbeRequest struct {
+	Model string `json:"model"`
+}
+
 type probeResponse struct {
 	Task   probeTask    `json:"task"`
 	Config alive.Config `json:"config,omitempty"`
@@ -60,7 +64,6 @@ type probeResponse struct {
 type probeTask struct {
 	ID            int64           `json:"id"`
 	Running       bool            `json:"running"`
-	Stopping      bool            `json:"stopping"`
 	Models        []string        `json:"models"`
 	RunningModels []string        `json:"running_models"`
 	Results       []alive.Result  `json:"results"`
@@ -72,8 +75,9 @@ type probeTask struct {
 }
 
 type probeLogEntry struct {
-	Time   string       `json:"time"`
-	Result alive.Result `json:"result"`
+	Time      string       `json:"time"`
+	LoopCount int          `json:"loop_count"`
+	Result    alive.Result `json:"result"`
 }
 
 type taskStore struct {
@@ -142,6 +146,7 @@ func newServer(configPath string) *server {
 	s.mux.HandleFunc("/api/models", s.handleModels)
 	s.mux.HandleFunc("/api/probe", s.handleProbe)
 	s.mux.HandleFunc("/api/probe/stop", s.handleStopProbe)
+	s.mux.HandleFunc("/api/probe/results/clear", s.handleClearProbeResults)
 	return s
 }
 
@@ -296,12 +301,30 @@ func (s *server) handleStopProbe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	task, err := s.tasks.stop()
+	var req stopProbeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	models := alive.AddModels(nil, []string{req.Model})
+	if len(models) == 0 {
+		writeError(w, http.StatusBadRequest, "select at least one running model to stop")
+		return
+	}
+	task, err := s.tasks.stopModels(models)
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	writeJSON(w, probeResponse{Task: task})
+}
+
+func (s *server) handleClearProbeResults(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, probeResponse{Task: s.tasks.clearResults()})
 }
 
 func (s *server) runProbeTask(ctx context.Context, taskID, runID int64, runner alive.Runner) {
@@ -344,9 +367,6 @@ func (ts *taskStore) start(models []string, loopCounts map[string]int) (probeTas
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 
-	if ts.task.Running && ts.task.Stopping {
-		return probeTask{}, nil, errors.New("a probe task is stopping")
-	}
 	if ts.runs == nil {
 		ts.runs = make(map[string]activeModelRun)
 	}
@@ -400,17 +420,45 @@ func (ts *taskStore) start(models []string, loopCounts map[string]int) (probeTas
 	return cloneTask(ts.task), runs, nil
 }
 
-func (ts *taskStore) stop() (probeTask, error) {
+func (ts *taskStore) stopModels(models []string) (probeTask, error) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	if !ts.task.Running {
 		return cloneTask(ts.task), errors.New("no probe task is running")
 	}
-	ts.task.Stopping = true
-	for _, run := range ts.runs {
+	stopped := 0
+	for _, model := range models {
+		run, ok := ts.runs[model]
+		if !ok {
+			continue
+		}
 		run.Cancel()
+		stopped++
+	}
+	if stopped == 0 {
+		return cloneTask(ts.task), errors.New("none of the selected models are running")
 	}
 	return cloneTask(ts.task), nil
+}
+
+func (ts *taskStore) clearResults() probeTask {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	if len(ts.task.Results) == 0 {
+		return cloneTask(ts.task)
+	}
+	running := make(map[string]struct{}, len(ts.task.RunningModels))
+	for _, model := range ts.task.RunningModels {
+		running[model] = struct{}{}
+	}
+	kept := ts.task.Results[:0]
+	for _, res := range ts.task.Results {
+		if _, ok := running[res.Model]; ok {
+			kept = append(kept, res)
+		}
+	}
+	ts.task.Results = kept
+	return cloneTask(ts.task)
 }
 
 func (ts *taskStore) snapshot() probeTask {
@@ -456,7 +504,6 @@ func (ts *taskStore) finishRun(taskID, runID int64, model string) {
 		return
 	}
 	ts.task.Running = false
-	ts.task.Stopping = false
 	ts.task.RunningModels = nil
 	ts.task.FinishedAt = time.Now().Format(time.RFC3339)
 	ts.runs = nil
@@ -475,7 +522,6 @@ func (ts *taskStore) failRun(taskID, runID int64, model, message string) {
 		return
 	}
 	ts.task.Running = false
-	ts.task.Stopping = false
 	ts.task.RunningModels = nil
 	ts.task.FinishedAt = time.Now().Format(time.RFC3339)
 	ts.runs = nil
@@ -488,7 +534,7 @@ func (ts *taskStore) isCurrentRunLocked(runID int64, model string) bool {
 
 func (ts *taskStore) loopCountForModel(model string) int {
 	if ts.task.LoopCounts != nil {
-		if loopCount := ts.task.LoopCounts[model]; loopCount > 0 {
+		if loopCount, ok := ts.task.LoopCounts[model]; ok {
 			return loopCount
 		}
 	}
@@ -496,7 +542,7 @@ func (ts *taskStore) loopCountForModel(model string) int {
 }
 
 func (ts *taskStore) prependLogLocked(timestamp string, res alive.Result) {
-	entry := probeLogEntry{Time: timestamp, Result: res}
+	entry := probeLogEntry{Time: timestamp, LoopCount: ts.loopCountForModel(res.Model), Result: res}
 	ts.task.Logs = append([]probeLogEntry{entry}, ts.task.Logs...)
 	if len(ts.task.Logs) > maxServerLogEntries {
 		ts.task.Logs = ts.task.Logs[:maxServerLogEntries]
@@ -520,11 +566,16 @@ func loopCountsForModels(models []string, counts map[string]int) map[string]int 
 	loopCounts := make(map[string]int, len(models))
 	for _, model := range models {
 		loopCount := 1
-		if counts != nil && counts[model] > 0 {
-			loopCount = counts[model]
+		if counts != nil {
+			if configured, ok := counts[model]; ok {
+				loopCount = configured
+			}
 		}
-		if loopCount > 9999 {
-			loopCount = 9999
+		if loopCount < 0 {
+			loopCount = 1
+		}
+		if loopCount > 99 {
+			loopCount = 99
 		}
 		loopCounts[model] = loopCount
 	}
@@ -550,21 +601,8 @@ func runningModelsInOrder(models []string, runs map[string]activeModelRun) []str
 	return running
 }
 
-func firstRunningModel(running, requested []string) string {
-	active := make(map[string]struct{}, len(running))
-	for _, model := range running {
-		active[model] = struct{}{}
-	}
-	for _, model := range requested {
-		if _, ok := active[model]; ok {
-			return model
-		}
-	}
-	return ""
-}
-
 func displayAttemptResult(res alive.Result, loopCount int) alive.Result {
-	if !res.Success && loopCount > 0 && res.Attempts < loopCount {
+	if !res.Success && (loopCount == 0 || res.Attempts < loopCount) {
 		res.Attempts++
 	}
 	return res

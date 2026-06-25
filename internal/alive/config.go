@@ -90,12 +90,12 @@ func (c Config) Timeout() time.Duration {
 
 func (c Config) LoopCountForModel(model string) int {
 	if c.ModelLoopCounts != nil {
-		if loopCount := c.ModelLoopCounts[model]; loopCount > 0 {
-			return loopCount
+		if loopCount, ok := c.ModelLoopCounts[model]; ok {
+			return clampLoopCount(loopCount)
 		}
 	}
 	if c.LoopCount > 0 {
-		return c.LoopCount
+		return clampLoopCount(c.LoopCount)
 	}
 	return 1
 }
@@ -167,7 +167,7 @@ func normalizeModelLoopCounts(models []string, counts map[string]int, legacyLoop
 	for _, model := range models {
 		loopCount := defaultLoopCount
 		if counts != nil {
-			if configured := counts[model]; configured > 0 {
+			if configured, ok := counts[model]; ok {
 				loopCount = configured
 			}
 		}
@@ -177,11 +177,11 @@ func normalizeModelLoopCounts(models []string, counts map[string]int, legacyLoop
 }
 
 func clampLoopCount(loopCount int) int {
-	if loopCount < 1 {
+	if loopCount < 0 {
 		return 1
 	}
-	if loopCount > 9999 {
-		return 9999
+	if loopCount > 99 {
+		return 99
 	}
 	return loopCount
 }
