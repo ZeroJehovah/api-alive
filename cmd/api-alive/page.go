@@ -420,7 +420,7 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {}, dirtyLoopCounts: new Set(), editLockedModels: new Set(), optimisticStops: new Map(), localStopLogs: new Map(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), backgroundSuccessFavicon: false, faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
+    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {}, dirtyLoopCounts: new Set(), editLockedModels: new Set(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Set(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), backgroundSuccessFavicon: false, faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
     const maxLogEntries = 100;
     const idlePollMS = 60000;
     const runningPollMS = 5000;
@@ -942,6 +942,7 @@ const indexHTML = `<!doctype html>
     }
     function applyTask(task) {
       task = reconcileOptimisticStops(task || {});
+      task = reconcileOptimisticClearedResults(task || {});
       handleSuccessNotifications(task || {});
       state.task = task || {};
       state.running = !!state.task.running;
@@ -962,6 +963,7 @@ const indexHTML = `<!doctype html>
         logEntries: [...state.logEntries],
         optimisticStops: new Map(state.optimisticStops),
         localStopLogs: new Map(state.localStopLogs),
+        optimisticClearedResults: new Set(state.optimisticClearedResults),
       };
     }
     function restoreClientState(snapshot) {
@@ -972,6 +974,7 @@ const indexHTML = `<!doctype html>
       state.logEntries = [...snapshot.logEntries];
       state.optimisticStops = new Map(snapshot.optimisticStops);
       state.localStopLogs = new Map(snapshot.localStopLogs);
+      state.optimisticClearedResults = new Set(snapshot.optimisticClearedResults);
       renderLog();
       renderRunningModels();
       renderModels();
@@ -1019,6 +1022,7 @@ const indexHTML = `<!doctype html>
       const currentTask = state.task || {};
       const taskModels = [...(currentTask.models || [])];
       models.forEach(model => {
+        state.optimisticClearedResults.delete(model);
         if (!taskModels.includes(model)) taskModels.push(model);
       });
       const runningModels = orderedModelNames([...state.runningModels, ...models]);
@@ -1045,6 +1049,18 @@ const indexHTML = `<!doctype html>
         logs: [...(task?.logs || [])],
         loop_counts: { ...(task?.loop_counts || {}) },
       };
+    }
+    function optimisticClearResults() {
+      const running = new Set(state.runningModels);
+      const currentTask = clientTaskCopy(state.task || {});
+      const keptResults = currentTask.results.filter(res => running.has(res.model));
+      currentTask.results.forEach(res => {
+        if (!running.has(res.model)) state.optimisticClearedResults.add(res.model);
+      });
+      state.task = { ...currentTask, results: keptResults };
+      state.results = new Map(keptResults.map(res => [res.model, res]));
+      renderModels();
+      updateFavicon();
     }
     function canceledResultFor(model) {
       const res = resultFor(model) || {};
@@ -1076,7 +1092,7 @@ const indexHTML = `<!doctype html>
           state.localStopLogs.delete(model);
           return;
         }
-        next.results = upsertClientResult(next.results, entry.result);
+        if (!state.optimisticClearedResults.has(model)) next.results = upsertClientResult(next.results, entry.result);
         next.logs = [entry, ...next.logs.filter(log => !isCanceledLogFor(log, model))].slice(0, maxLogEntries);
       });
       state.optimisticStops.forEach((entry, model) => {
@@ -1086,9 +1102,26 @@ const indexHTML = `<!doctype html>
           return;
         }
         next.running_models = next.running_models.filter(runningModel => runningModel !== model);
-        next.results = upsertClientResult(next.results, entry.result);
+        if (!state.optimisticClearedResults.has(model)) next.results = upsertClientResult(next.results, entry.result);
       });
       next.running = next.running_models.length > 0;
+      return next;
+    }
+    function reconcileOptimisticClearedResults(task) {
+      const next = clientTaskCopy(task);
+      if (state.optimisticClearedResults.size === 0) return next;
+      const running = new Set(next.running_models || []);
+      const resultModels = new Set(next.results.map(res => res.model));
+      next.results = next.results.filter(res => !state.optimisticClearedResults.has(res.model) || running.has(res.model));
+      state.optimisticClearedResults.forEach(model => {
+        if (running.has(model)) {
+          state.optimisticClearedResults.delete(model);
+          return;
+        }
+        if (!resultModels.has(model) && !state.optimisticStops.has(model) && !state.localStopLogs.has(model)) {
+          state.optimisticClearedResults.delete(model);
+        }
+      });
       return next;
     }
     function optimisticStopProbe(model) {
@@ -1217,10 +1250,20 @@ const indexHTML = `<!doctype html>
       }
     }
     async function clearResults() {
-      const data = await request('/api/probe/results/clear', { method: 'POST', body: '{}' });
-      applyTask(data.task);
+      const previous = snapshotClientState();
+      optimisticClearResults();
       setMessage('Results cleared.');
       schedulePoll();
+      try {
+        const data = await request('/api/probe/results/clear', { method: 'POST', body: '{}' });
+        applyTask(data.task);
+        setMessage('Results cleared.');
+        schedulePoll();
+      } catch (err) {
+        restoreClientState(previous);
+        await pollState().catch(refreshErr => setMessage(refreshErr.message));
+        throw err;
+      }
     }
 
     $('reloadBtn').addEventListener('click', () => loadState().catch(err => setMessage(err.message)));
