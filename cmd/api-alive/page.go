@@ -425,6 +425,7 @@ const indexHTML = `<!doctype html>
     const idlePollMS = 60000;
     const runningPollMS = 5000;
     let pollTimer = null;
+    let taskEventSource = null;
     const faviconColors = {
       idle: { fill: '#94a3b8', highlight: '#cbd5e1' },
       running: { fill: '#2563eb', highlight: '#93c5fd' },
@@ -631,6 +632,26 @@ const indexHTML = `<!doctype html>
         setMessage(err.message);
         schedulePoll();
       }), state.running || state.optimisticStops.size > 0 ? runningPollMS : idlePollMS);
+    }
+    function connectTaskStream() {
+      if (taskEventSource || !state.config || !('EventSource' in window)) return;
+      taskEventSource = new EventSource('/api/events');
+      taskEventSource.onmessage = event => {
+        if (!event.data) return;
+        try {
+          applyTask(JSON.parse(event.data) || {});
+        } catch (err) {
+          console.warn('task stream parse failed', err);
+        }
+      };
+      taskEventSource.onerror = () => {
+        if (taskEventSource?.readyState === EventSource.CLOSED) taskEventSource = null;
+      };
+    }
+    function closeTaskStream() {
+      if (!taskEventSource) return;
+      taskEventSource.close();
+      taskEventSource = null;
     }
     function setBusy(value) {
       state.running = value;
@@ -973,6 +994,8 @@ const indexHTML = `<!doctype html>
       renderRunningModels();
       renderModels();
       updateFavicon();
+      connectTaskStream();
+      schedulePoll();
     }
     function snapshotClientState() {
       return {
@@ -1297,6 +1320,7 @@ const indexHTML = `<!doctype html>
     document.addEventListener('visibilitychange', handlePageAttentionChange);
     window.addEventListener('focus', handlePageAttentionChange);
     window.addEventListener('blur', handlePageAttentionChange);
+    window.addEventListener('beforeunload', closeTaskStream);
     renderLog();
     renderRunningModels();
     updateFavicon();

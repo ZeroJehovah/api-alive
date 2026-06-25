@@ -81,11 +81,12 @@ type probeLogEntry struct {
 }
 
 type taskStore struct {
-	mu        sync.Mutex
-	nextID    int64
-	nextRunID int64
-	task      probeTask
-	runs      map[string]activeModelRun
+	mu          sync.Mutex
+	nextID      int64
+	nextRunID   int64
+	task        probeTask
+	runs        map[string]activeModelRun
+	subscribers map[chan probeTask]struct{}
 }
 
 type activeModelRun struct {
@@ -142,6 +143,7 @@ func newServer(configPath string) *server {
 	s := &server{configPath: configPath, mux: http.NewServeMux(), tasks: &taskStore{}}
 	s.mux.HandleFunc("/", s.handleIndex)
 	s.mux.HandleFunc("/api/state", s.handleState)
+	s.mux.HandleFunc("/api/events", s.handleEvents)
 	s.mux.HandleFunc("/api/config", s.handleConfig)
 	s.mux.HandleFunc("/api/models", s.handleModels)
 	s.mux.HandleFunc("/api/probe", s.handleProbe)
@@ -327,6 +329,59 @@ func (s *server) handleClearProbeResults(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, probeResponse{Task: s.tasks.clearResults()})
 }
 
+func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	updates, unsubscribe := s.tasks.subscribe()
+	defer unsubscribe()
+
+	ping := time.NewTicker(20 * time.Second)
+	defer ping.Stop()
+
+	writeEvent := func(task probeTask) error {
+		data, err := json.Marshal(task)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case task, ok := <-updates:
+			if !ok {
+				return
+			}
+			if err := writeEvent(task); err != nil {
+				return
+			}
+		case <-ping.C:
+			if _, err := io.WriteString(w, ": keep-alive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
 func (s *server) runProbeTask(ctx context.Context, taskID, runID int64, runner alive.Runner) {
 	events, err := runner.RunEvents(ctx)
 	model := ""
@@ -417,6 +472,7 @@ func (ts *taskStore) start(models []string, loopCounts map[string]int) (probeTas
 		runs = append(runs, modelRun{ID: run.ID, Model: model, Ctx: ctx})
 	}
 	ts.task.RunningModels = runningModelsInOrder(ts.task.Models, ts.runs)
+	ts.publishLocked()
 	return cloneTask(ts.task), runs, nil
 }
 
@@ -458,6 +514,7 @@ func (ts *taskStore) clearResults() probeTask {
 		}
 	}
 	ts.task.Results = kept
+	ts.publishLocked()
 	return cloneTask(ts.task)
 }
 
@@ -465,6 +522,49 @@ func (ts *taskStore) snapshot() probeTask {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	return cloneTask(ts.task)
+}
+
+func (ts *taskStore) subscribe() (<-chan probeTask, func()) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	if ts.subscribers == nil {
+		ts.subscribers = make(map[chan probeTask]struct{})
+	}
+	ch := make(chan probeTask, 1)
+	ts.subscribers[ch] = struct{}{}
+	ch <- cloneTask(ts.task)
+	unsubscribe := func() {
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		if _, ok := ts.subscribers[ch]; !ok {
+			return
+		}
+		delete(ts.subscribers, ch)
+		close(ch)
+	}
+	return ch, unsubscribe
+}
+
+func (ts *taskStore) publishLocked() {
+	if len(ts.subscribers) == 0 {
+		return
+	}
+	snapshot := cloneTask(ts.task)
+	for ch := range ts.subscribers {
+		select {
+		case ch <- snapshot:
+			continue
+		default:
+		}
+		select {
+		case <-ch:
+		default:
+		}
+		select {
+		case ch <- snapshot:
+		default:
+		}
+	}
 }
 
 func (ts *taskStore) applyEvent(taskID, runID int64, event alive.Event) {
@@ -481,6 +581,7 @@ func (ts *taskStore) applyEvent(taskID, runID int64, event alive.Event) {
 	if event.Type == alive.EventAttempt {
 		ts.task.Results = upsertResult(ts.task.Results, timestampResult(displayAttemptResult(res, ts.loopCountForModel(res.Model)), now))
 		ts.prependLogLocked(now, res)
+		ts.publishLocked()
 		return
 	}
 	if event.Type == alive.EventResult {
@@ -489,6 +590,7 @@ func (ts *taskStore) applyEvent(taskID, runID int64, event alive.Event) {
 		if len(res.AttemptResults) == 0 {
 			ts.prependLogLocked(now, res)
 		}
+		ts.publishLocked()
 	}
 }
 
@@ -501,12 +603,14 @@ func (ts *taskStore) finishRun(taskID, runID int64, model string) {
 	delete(ts.runs, model)
 	ts.task.RunningModels = removeModelName(ts.task.RunningModels, model)
 	if len(ts.runs) > 0 {
+		ts.publishLocked()
 		return
 	}
 	ts.task.Running = false
 	ts.task.RunningModels = nil
 	ts.task.FinishedAt = time.Now().Format(time.RFC3339)
 	ts.runs = nil
+	ts.publishLocked()
 }
 
 func (ts *taskStore) failRun(taskID, runID int64, model, message string) {
@@ -519,12 +623,14 @@ func (ts *taskStore) failRun(taskID, runID int64, model, message string) {
 	ts.task.RunningModels = removeModelName(ts.task.RunningModels, model)
 	ts.task.Error = message
 	if len(ts.runs) > 0 {
+		ts.publishLocked()
 		return
 	}
 	ts.task.Running = false
 	ts.task.RunningModels = nil
 	ts.task.FinishedAt = time.Now().Format(time.RFC3339)
 	ts.runs = nil
+	ts.publishLocked()
 }
 
 func (ts *taskStore) isCurrentRunLocked(runID int64, model string) bool {
