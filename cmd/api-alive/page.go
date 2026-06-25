@@ -5,6 +5,7 @@ const indexHTML = `<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link id="favicon" rel="icon" type="image/svg+xml">
   <title>API Alive</title>
   <style>
     :root {
@@ -418,11 +419,18 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {}, dirtyLoopCounts: new Set(), editLockedModels: new Set(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), modelTableMode: '', modelRowOrder: [] };
+    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {}, dirtyLoopCounts: new Set(), editLockedModels: new Set(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), backgroundSuccessFavicon: false, faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
     const maxLogEntries = 100;
     const idlePollMS = 60000;
     const runningPollMS = 5000;
     let pollTimer = null;
+    const faviconColors = {
+      idle: { fill: '#94a3b8', highlight: '#cbd5e1' },
+      running: { fill: '#2563eb', highlight: '#93c5fd' },
+      success: { fill: '#22c55e', highlight: '#86efac' },
+      failed: { fill: '#ef4444', highlight: '#fca5a5' },
+    };
+    const faviconCache = {};
     const $ = (id) => document.getElementById(id);
 
     function setMessage(text) { $('message').textContent = text; }
@@ -442,6 +450,45 @@ const indexHTML = `<!doctype html>
     function text(value) { return document.createTextNode(String(value ?? '')); }
     function replaceChildrenWithHTML(element, html) {
       if (element.innerHTML !== html) element.innerHTML = html;
+    }
+    function faviconHref(status) {
+      if (faviconCache[status]) return faviconCache[status];
+      const color = faviconColors[status] || faviconColors.idle;
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">' +
+        '<rect x="2" y="2" width="28" height="28" rx="6" fill="#1e293b"/>' +
+        '<circle cx="16" cy="16" r="7" fill="' + color.fill + '"/>' +
+        '<circle cx="14" cy="14" r="2.5" fill="' + color.highlight + '" opacity="0.8"/>' +
+        '</svg>';
+      faviconCache[status] = 'data:image/svg+xml,' + encodeURIComponent(svg);
+      return faviconCache[status];
+    }
+    function latestTaskResult(task) {
+      const logs = task?.logs || [];
+      if (logs.length) return logs[0].result || logs[0];
+      return (task?.results || []).filter(res => res.updated_at).sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0] || null;
+    }
+    function taskFinishedWithFailure(task) {
+      if (!task || task.running || !task.finished_at) return false;
+      const latest = latestTaskResult(task);
+      return !!latest && latest.success === false;
+    }
+    function desiredFaviconStatus() {
+      if (isPageForeground()) return state.running ? 'running' : 'idle';
+      if (state.backgroundSuccessFavicon) return 'success';
+      if (state.running) return 'running';
+      if (taskFinishedWithFailure(state.task)) return 'failed';
+      return 'idle';
+    }
+    function updateFavicon() {
+      const status = desiredFaviconStatus();
+      if (state.faviconStatus === status) return;
+      const icon = $('favicon');
+      if (icon) icon.href = faviconHref(status);
+      state.faviconStatus = status;
+    }
+    function handlePageAttentionChange() {
+      if (isPageForeground()) state.backgroundSuccessFavicon = false;
+      updateFavicon();
     }
     function notificationsSupported() { return 'Notification' in window; }
     function notificationPermission() { return notificationsSupported() ? Notification.permission : 'unsupported'; }
@@ -555,6 +602,7 @@ const indexHTML = `<!doctype html>
       }
       const fresh = successes.filter(entry => !state.notifiedSuccessLogKeys.has(successLogKey(entry)));
       recordSuccessLogEntries(fresh);
+      if (fresh.length && !isPageForeground()) state.backgroundSuccessFavicon = true;
       notifySuccessEntries(fresh);
     }
     function schedulePoll() {
@@ -901,6 +949,7 @@ const indexHTML = `<!doctype html>
       renderLog();
       renderRunningModels();
       renderModels();
+      updateFavicon();
     }
     function applyServerState(data) {
       state.config = mergeDirtyLoopCounts(data.config);
@@ -1032,8 +1081,12 @@ const indexHTML = `<!doctype html>
     $('runSelectedBtn').addEventListener('click', () => startProbe([...state.selected]).catch(err => setMessage(err.message)));
     $('editModelsBtn').addEventListener('click', () => toggleModelEdit().catch(err => setMessage(err.message)));
     $('cancelEditBtn').addEventListener('click', () => cancelModelEdit());
+    document.addEventListener('visibilitychange', handlePageAttentionChange);
+    window.addEventListener('focus', handlePageAttentionChange);
+    window.addEventListener('blur', handlePageAttentionChange);
     renderLog();
     renderRunningModels();
+    updateFavicon();
     updateNotificationButton();
     installNotificationPermissionPrompt();
     loadState().catch(err => setMessage(err.message));
