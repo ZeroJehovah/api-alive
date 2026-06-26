@@ -420,10 +420,11 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {}, dirtyLoopCounts: new Set(), editLockedModels: new Set(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Set(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), failureFaviconPrimed: false, backgroundSuccessFavicon: false, backgroundFailedFavicon: false, handledFailureFaviconKey: '', faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
+    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {}, dirtyLoopCounts: new Set(), editLockedModels: new Set(), optimisticStarts: new Map(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Map(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), failureFaviconPrimed: false, backgroundSuccessFavicon: false, backgroundFailedFavicon: false, handledFailureFaviconKey: '', faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
     const maxLogEntries = 100;
     const idlePollMS = 60000;
     const runningPollMS = 5000;
+    const localTrustWindowMS = 12000;
     let pollTimer = null;
     let taskEventSource = null;
     const faviconColors = {
@@ -626,12 +627,46 @@ const indexHTML = `<!doctype html>
       state.handledFailureFaviconKey = key;
       if (!isPageForeground()) state.backgroundFailedFavicon = true;
     }
+    function localTrustExpiresAt() {
+      return Date.now() + localTrustWindowMS;
+    }
+    function isTrustedLocalEntry(entry) {
+      return !!entry && Number(entry.expires_at || 0) > Date.now();
+    }
+    function pruneLocalTrust() {
+      state.optimisticStarts.forEach((entry, model) => {
+        if (!isTrustedLocalEntry(entry)) state.optimisticStarts.delete(model);
+      });
+      state.optimisticStops.forEach((entry, model) => {
+        if (!isTrustedLocalEntry(entry)) {
+          state.optimisticStops.delete(model);
+          state.localStopLogs.delete(model);
+        }
+      });
+      state.localStopLogs.forEach((entry, model) => {
+        if (!state.optimisticStops.has(model)) state.localStopLogs.delete(model);
+      });
+      state.optimisticClearedResults.forEach((entry, model) => {
+        if (!isTrustedLocalEntry(entry)) state.optimisticClearedResults.delete(model);
+      });
+    }
+    function hasLocalTrust() {
+      pruneLocalTrust();
+      return state.optimisticStarts.size > 0 || state.optimisticStops.size > 0 || state.optimisticClearedResults.size > 0;
+    }
+    function resultStateKey(res) {
+      if (!res) return '';
+      return [res.model || '', res.updated_at || '', res.attempts || '', res.success ? '1' : '0', res.duration_ms || '', res.error || ''].join('|');
+    }
+    function taskResultFor(task, model) {
+      return (task?.results || []).find(res => res.model === model) || null;
+    }
     function schedulePoll() {
       clearTimeout(pollTimer);
       pollTimer = setTimeout(() => pollState().catch(err => {
         setMessage(err.message);
         schedulePoll();
-      }), state.running || state.optimisticStops.size > 0 ? runningPollMS : idlePollMS);
+      }), state.running || hasLocalTrust() ? runningPollMS : idlePollMS);
     }
     function connectTaskStream() {
       if (taskEventSource || !state.config || !('EventSource' in window)) return;
@@ -981,6 +1016,8 @@ const indexHTML = `<!doctype html>
       $('maxOutputChars').value = config.max_output_chars || 4000;
     }
     function applyTask(task) {
+      pruneLocalTrust();
+      task = reconcileOptimisticStarts(task || {});
       task = reconcileOptimisticStops(task || {});
       task = reconcileOptimisticClearedResults(task || {});
       handleSuccessNotifications(task || {});
@@ -1004,9 +1041,10 @@ const indexHTML = `<!doctype html>
         runningModels: new Set(state.runningModels),
         results: new Map(state.results),
         logEntries: [...state.logEntries],
+        optimisticStarts: new Map(state.optimisticStarts),
         optimisticStops: new Map(state.optimisticStops),
         localStopLogs: new Map(state.localStopLogs),
-        optimisticClearedResults: new Set(state.optimisticClearedResults),
+        optimisticClearedResults: new Map(state.optimisticClearedResults),
       };
     }
     function restoreClientState(snapshot) {
@@ -1015,9 +1053,10 @@ const indexHTML = `<!doctype html>
       state.runningModels = new Set(snapshot.runningModels);
       state.results = new Map(snapshot.results);
       state.logEntries = [...snapshot.logEntries];
+      state.optimisticStarts = new Map(snapshot.optimisticStarts);
       state.optimisticStops = new Map(snapshot.optimisticStops);
       state.localStopLogs = new Map(snapshot.localStopLogs);
-      state.optimisticClearedResults = new Set(snapshot.optimisticClearedResults);
+      state.optimisticClearedResults = new Map(snapshot.optimisticClearedResults);
       renderLog();
       renderRunningModels();
       renderModels();
@@ -1064,13 +1103,25 @@ const indexHTML = `<!doctype html>
     function optimisticStartProbe(models, loopCounts) {
       const currentTask = state.task || {};
       const taskModels = [...(currentTask.models || [])];
+      const expiresAt = localTrustExpiresAt();
       models.forEach(model => {
         state.optimisticClearedResults.delete(model);
+        state.optimisticStops.delete(model);
+        state.localStopLogs.delete(model);
         if (!taskModels.includes(model)) taskModels.push(model);
       });
       const runningModels = orderedModelNames([...state.runningModels, ...models]);
       const nextResults = new Map(state.results);
-      models.forEach(model => nextResults.set(model, { model, attempts: 1 }));
+      models.forEach(model => {
+        const result = { model, attempts: 1 };
+        state.optimisticStarts.set(model, {
+          expires_at: expiresAt,
+          loop_count: normalizeLoopCount(loopCounts[model]),
+          base_result_key: resultStateKey(state.results.get(model)),
+          result,
+        });
+        nextResults.set(model, result);
+      });
       const nextLoopCounts = { ...(currentTask.loop_counts || {}) };
       models.forEach(model => {
         nextLoopCounts[model] = normalizeLoopCount(loopCounts[model]);
@@ -1093,12 +1144,36 @@ const indexHTML = `<!doctype html>
         loop_counts: { ...(task?.loop_counts || {}) },
       };
     }
+    function reconcileOptimisticStarts(task) {
+      const next = clientTaskCopy(task);
+      if (state.optimisticStarts.size === 0) return next;
+      state.optimisticStarts.forEach((entry, model) => {
+        if (!isTrustedLocalEntry(entry)) {
+          state.optimisticStarts.delete(model);
+          return;
+        }
+        const serverRunning = (next.running_models || []).includes(model);
+        const serverResult = taskResultFor(next, model);
+        const serverHasFreshResult = !!serverResult && !!serverResult.updated_at && resultStateKey(serverResult) !== (entry.base_result_key || '');
+        if (!serverRunning && serverHasFreshResult) {
+          state.optimisticStarts.delete(model);
+          return;
+        }
+        if (!next.models.includes(model)) next.models.push(model);
+        if (!next.running_models.includes(model)) next.running_models = orderedModelNames([...next.running_models, model]);
+        if (!serverHasFreshResult) next.results = upsertClientResult(next.results, entry.result);
+        next.loop_counts[model] = normalizeLoopCount(entry.loop_count);
+      });
+      next.running = next.running_models.length > 0;
+      return next;
+    }
     function optimisticClearResults() {
       const running = new Set(state.runningModels);
       const currentTask = clientTaskCopy(state.task || {});
       const keptResults = currentTask.results.filter(res => running.has(res.model));
+      const expiresAt = localTrustExpiresAt();
       currentTask.results.forEach(res => {
-        if (!running.has(res.model)) state.optimisticClearedResults.add(res.model);
+        if (!running.has(res.model)) state.optimisticClearedResults.set(res.model, { expires_at: expiresAt, base_result_key: resultStateKey(res) });
       });
       state.task = { ...currentTask, results: keptResults };
       state.results = new Map(keptResults.map(res => [res.model, res]));
@@ -1131,6 +1206,10 @@ const indexHTML = `<!doctype html>
     function reconcileOptimisticStops(task) {
       const next = clientTaskCopy(task);
       state.localStopLogs.forEach((entry, model) => {
+        if (!state.optimisticStops.has(model)) {
+          state.localStopLogs.delete(model);
+          return;
+        }
         if (next.logs.some(log => isCanceledLogFor(log, model))) {
           state.localStopLogs.delete(model);
           return;
@@ -1139,9 +1218,9 @@ const indexHTML = `<!doctype html>
         next.logs = [entry, ...next.logs.filter(log => !isCanceledLogFor(log, model))].slice(0, maxLogEntries);
       });
       state.optimisticStops.forEach((entry, model) => {
-        const stillRunning = next.running_models.includes(model);
-        if (!stillRunning) {
+        if (!isTrustedLocalEntry(entry)) {
           state.optimisticStops.delete(model);
+          state.localStopLogs.delete(model);
           return;
         }
         next.running_models = next.running_models.filter(runningModel => runningModel !== model);
@@ -1154,14 +1233,17 @@ const indexHTML = `<!doctype html>
       const next = clientTaskCopy(task);
       if (state.optimisticClearedResults.size === 0) return next;
       const running = new Set(next.running_models || []);
-      const resultModels = new Set(next.results.map(res => res.model));
-      next.results = next.results.filter(res => !state.optimisticClearedResults.has(res.model) || running.has(res.model));
-      state.optimisticClearedResults.forEach(model => {
-        if (running.has(model)) {
-          state.optimisticClearedResults.delete(model);
-          return;
+      next.results = next.results.filter(res => {
+        const entry = state.optimisticClearedResults.get(res.model);
+        if (!entry) return true;
+        if (running.has(res.model) || !isTrustedLocalEntry(entry)) {
+          state.optimisticClearedResults.delete(res.model);
+          return true;
         }
-        if (!resultModels.has(model) && !state.optimisticStops.has(model) && !state.localStopLogs.has(model)) {
+        return false;
+      });
+      state.optimisticClearedResults.forEach((entry, model) => {
+        if (running.has(model) || !isTrustedLocalEntry(entry)) {
           state.optimisticClearedResults.delete(model);
         }
       });
@@ -1169,7 +1251,8 @@ const indexHTML = `<!doctype html>
     }
     function optimisticStopProbe(model) {
       const result = canceledResultFor(model);
-      const entry = { time: result.updated_at, loop_count: activeLoopCountFor(model), result };
+      const entry = { time: result.updated_at, loop_count: activeLoopCountFor(model), expires_at: localTrustExpiresAt(), result };
+      state.optimisticStarts.delete(model);
       state.optimisticStops.set(model, entry);
       state.localStopLogs.set(model, entry);
       applyTask(state.task || {});
@@ -1255,10 +1338,7 @@ const indexHTML = `<!doctype html>
     async function startProbe(models) {
       models = [...new Set(models)].filter(model => model);
       if (!models.length || state.editing) return;
-      models.forEach(model => {
-        state.optimisticStops.delete(model);
-        state.localStopLogs.delete(model);
-      });
+      const previous = snapshotClientState();
       const loopCounts = loopCountsForModels(models, state.config.model_loop_counts || {});
       optimisticStartProbe(models, loopCounts);
       setMessage('Starting ' + models.length + ' model(s)...');
@@ -1271,6 +1351,7 @@ const indexHTML = `<!doctype html>
         setMessage('Probe task started.');
         schedulePoll();
       } catch (err) {
+        restoreClientState(previous);
         await pollState().catch(refreshErr => setMessage(refreshErr.message));
         throw err;
       }
