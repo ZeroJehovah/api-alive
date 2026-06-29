@@ -20,6 +20,7 @@ type Result struct {
 	Error          string        `json:"error,omitempty"`
 	Duration       time.Duration `json:"-"`
 	DurationMS     int64         `json:"duration_ms"`
+	AttemptStarted time.Time     `json:"-"`
 	UpdatedAt      string        `json:"updated_at,omitempty"`
 	Prompt         string        `json:"prompt"`
 	Expected       string        `json:"expected"`
@@ -31,6 +32,7 @@ type Runner struct {
 	Config         Config
 	Prompts        []PromptCase
 	commandBuilder func(model string, prompt PromptCase) string
+	attemptSpacing time.Duration
 }
 
 type Event struct {
@@ -39,8 +41,9 @@ type Event struct {
 }
 
 const (
-	EventAttempt = "attempt"
-	EventResult  = "result"
+	EventAttempt          = "attempt"
+	EventResult           = "result"
+	defaultAttemptSpacing = 5 * time.Second
 )
 
 func (r Runner) Run(ctx context.Context) (<-chan Result, error) {
@@ -123,6 +126,13 @@ func (r Runner) runModelEvents(parent context.Context, model string, rng *rand.R
 		attemptResults = make([]Result, 0, loopCount)
 	}
 	for attempt := 1; loopCount == 0 || attempt <= loopCount; attempt++ {
+		if attempt > 1 {
+			if err := waitForNextAttempt(parent, res.AttemptStarted, r.modelAttemptSpacing()); err != nil {
+				res.Error = err.Error()
+				res.AttemptResults = attemptResults
+				return res
+			}
+		}
 		prompt := r.Prompts[rng.Intn(len(r.Prompts))]
 		res = r.runAttempt(parent, model, prompt, tmp, attempt)
 		attemptResults = append(attemptResults, res)
@@ -132,6 +142,7 @@ func (r Runner) runModelEvents(parent context.Context, model string, rng *rand.R
 			return res
 		}
 		if parent.Err() != nil {
+			res.Error = parent.Err().Error()
 			res.AttemptResults = attemptResults
 			return res
 		}
@@ -143,10 +154,11 @@ func (r Runner) runModelEvents(parent context.Context, model string, rng *rand.R
 func (r Runner) runAttempt(parent context.Context, model string, prompt PromptCase, tmp string, attempt int) Result {
 	started := time.Now()
 	res := Result{
-		Model:    model,
-		Attempts: attempt,
-		Prompt:   prompt.Input,
-		Expected: prompt.Expected,
+		Model:          model,
+		Attempts:       attempt,
+		AttemptStarted: started,
+		Prompt:         prompt.Input,
+		Expected:       prompt.Expected,
 	}
 
 	command := r.shellCommand(model, prompt)
@@ -183,6 +195,31 @@ func (r Runner) runAttempt(parent context.Context, model string, prompt PromptCa
 	res.Duration = time.Since(started)
 	res.DurationMS = res.Duration.Milliseconds()
 	return res
+}
+
+func (r Runner) modelAttemptSpacing() time.Duration {
+	if r.attemptSpacing > 0 {
+		return r.attemptSpacing
+	}
+	return defaultAttemptSpacing
+}
+
+func waitForNextAttempt(ctx context.Context, previousStarted time.Time, spacing time.Duration) error {
+	if spacing <= 0 || previousStarted.IsZero() {
+		return nil
+	}
+	wait := time.Until(previousStarted.Add(spacing))
+	if wait <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (r Runner) shellCommand(model string, prompt PromptCase) string {
