@@ -379,10 +379,11 @@ const indexHTML = `<!doctype html>
               <input id="newModel" placeholder="gpt-5 or vendor/gpt-5.5">
               <button type="submit">Add</button>
             </form>
-            <button class="secondary" id="clearResultsBtn" type="button">Clear results</button>
             <button class="secondary" id="editModelsBtn" type="button">Edit</button>
             <button class="secondary" id="cancelEditBtn" type="button" hidden>Cancel</button>
             <button id="runSelectedBtn">Run selected</button>
+            <button class="secondary" id="clearResultsBtn" type="button">Clear results</button>
+            <button class="secondary" id="stopAllBtn" type="button">Stop all</button>
           </div>
         </header>
         <div class="body">
@@ -690,15 +691,7 @@ const indexHTML = `<!doctype html>
     }
     function setBusy(value) {
       state.running = value;
-      $('runSelectedBtn').disabled = state.editing || runnableSelectedModels().length === 0;
-      $('runSelectedBtn').hidden = state.editing;
-      $('clearResultsBtn').hidden = state.editing;
-      $('addForm').hidden = !state.editing;
-      $('cancelEditBtn').hidden = !state.editing;
-      $('cancelEditBtn').disabled = false;
-      $('editModelsBtn').disabled = !state.config;
-      $('editModelsBtn').textContent = state.editing ? 'Save' : 'Edit';
-      $('editModelsBtn').className = state.editing ? '' : 'secondary';
+      updateModelHeaderControls();
       document.querySelectorAll('[data-run-one]').forEach(btn => btn.disabled = state.editing);
       document.querySelectorAll('[data-stop-one]').forEach(btn => btn.disabled = state.editing || !state.runningModels.has(btn.dataset.stopOne));
       document.querySelectorAll('[data-move]').forEach(btn => { btn.disabled = btn.dataset.boundary === 'true'; });
@@ -736,23 +729,35 @@ const indexHTML = `<!doctype html>
     function updateSelectedCount() {
       const models = visibleModels();
       $('selectedCount').textContent = state.editing ? 'Editing' : state.selected.size + '/' + models.length;
-      $('runSelectedBtn').disabled = state.editing || runnableSelectedModels().length === 0;
-      $('runSelectedBtn').hidden = state.editing;
-      $('clearResultsBtn').hidden = state.editing;
-      $('addForm').hidden = !state.editing;
-      $('cancelEditBtn').hidden = !state.editing;
-      $('cancelEditBtn').disabled = false;
-      $('editModelsBtn').disabled = !state.config;
-      $('editModelsBtn').textContent = state.editing ? 'Save' : 'Edit';
-      $('editModelsBtn').className = state.editing ? '' : 'secondary';
+      updateModelHeaderControls();
       const selectAll = document.querySelector('[data-select-all]');
       if (selectAll) {
         selectAll.checked = models.length > 0 && state.selected.size === models.length;
         selectAll.indeterminate = state.selected.size > 0 && state.selected.size < models.length;
       }
     }
+    function updateModelHeaderControls() {
+      $('runSelectedBtn').disabled = state.editing || runnableSelectedModels().length === 0;
+      $('runSelectedBtn').hidden = state.editing;
+      $('clearResultsBtn').disabled = state.editing || !hasClearableResults();
+      $('clearResultsBtn').hidden = state.editing;
+      $('stopAllBtn').disabled = state.editing || stoppableModels().length === 0;
+      $('stopAllBtn').hidden = state.editing;
+      $('addForm').hidden = !state.editing;
+      $('cancelEditBtn').hidden = !state.editing;
+      $('cancelEditBtn').disabled = false;
+      $('editModelsBtn').disabled = !state.config;
+      $('editModelsBtn').textContent = state.editing ? 'Save' : 'Edit';
+      $('editModelsBtn').className = state.editing ? '' : 'secondary';
+    }
     function runnableSelectedModels() {
       return [...state.selected].filter(model => model);
+    }
+    function hasClearableResults() {
+      return [...state.results.values()].some(res => res?.model && !state.runningModels.has(res.model));
+    }
+    function stoppableModels() {
+      return orderedModelNames([...state.runningModels]).filter(model => state.runningModels.has(model));
     }
     function statusPill(model) {
       if (state.runningModels.has(model)) return '<span class="pill run"><span class="live-dot"></span>Running</span>';
@@ -1250,11 +1255,17 @@ const indexHTML = `<!doctype html>
       return next;
     }
     function optimisticStopProbe(model) {
-      const result = canceledResultFor(model);
-      const entry = { time: result.updated_at, loop_count: activeLoopCountFor(model), expires_at: localTrustExpiresAt(), result };
-      state.optimisticStarts.delete(model);
-      state.optimisticStops.set(model, entry);
-      state.localStopLogs.set(model, entry);
+      optimisticStopProbes([model]);
+    }
+    function optimisticStopProbes(models) {
+      const expiresAt = localTrustExpiresAt();
+      orderedModelNames([...new Set(models)]).forEach(model => {
+        const result = canceledResultFor(model);
+        const entry = { time: result.updated_at, loop_count: activeLoopCountFor(model), expires_at: expiresAt, result };
+        state.optimisticStarts.delete(model);
+        state.optimisticStops.set(model, entry);
+        state.localStopLogs.set(model, entry);
+      });
       applyTask(state.task || {});
     }
     async function saveRuntime() {
@@ -1356,22 +1367,28 @@ const indexHTML = `<!doctype html>
         throw err;
       }
     }
-    async function stopProbe(model) {
-      if (!state.runningModels.has(model)) return;
+    async function stopProbe(models) {
+      models = Array.isArray(models) ? models : [models];
+      models = orderedModelNames([...new Set(models)]).filter(model => state.runningModels.has(model));
+      if (!models.length || state.editing) return;
       const previous = snapshotClientState();
-      optimisticStopProbe(model);
-      setMessage('Stopping ' + model + '...');
+      optimisticStopProbes(models);
+      const label = models.length === 1 ? models[0] : models.length + ' models';
+      setMessage('Stopping ' + label + '...');
       schedulePoll();
       try {
-        const data = await request('/api/probe/stop', { method: 'POST', body: JSON.stringify({ model }) });
+        const data = await request('/api/probe/stop', { method: 'POST', body: JSON.stringify({ models }) });
         applyTask(data.task);
-        setMessage('Stopping ' + model + '...');
+        setMessage('Stopping ' + label + '...');
         schedulePoll();
       } catch (err) {
         restoreClientState(previous);
         await pollState().catch(refreshErr => setMessage(refreshErr.message));
         throw err;
       }
+    }
+    async function stopAllProbes() {
+      return stopProbe(stoppableModels());
     }
     async function clearResults() {
       const previous = snapshotClientState();
@@ -1396,6 +1413,7 @@ const indexHTML = `<!doctype html>
     $('clearResultsBtn').addEventListener('click', () => clearResults().catch(err => setMessage(err.message)));
     $('addForm').addEventListener('submit', event => { event.preventDefault(); addModel($('newModel').value).catch(err => setMessage(err.message)); });
     $('runSelectedBtn').addEventListener('click', () => startProbe([...state.selected]).catch(err => setMessage(err.message)));
+    $('stopAllBtn').addEventListener('click', () => stopAllProbes().catch(err => setMessage(err.message)));
     $('editModelsBtn').addEventListener('click', () => toggleModelEdit().catch(err => setMessage(err.message)));
     $('cancelEditBtn').addEventListener('click', () => cancelModelEdit());
     document.addEventListener('visibilitychange', handlePageAttentionChange);
