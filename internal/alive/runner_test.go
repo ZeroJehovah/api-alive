@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const testAttemptSpacing = time.Millisecond
+
 func TestRunnerRetriesUntilExpectedOutputMatches(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Models = []string{"a"}
@@ -15,6 +17,7 @@ func TestRunnerRetriesUntilExpectedOutputMatches(t *testing.T) {
 		Config:         cfg,
 		commandBuilder: staticCommand(`n=$(cat tries 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > tries; if [ "$n" -lt 3 ]; then echo NO; else echo OK; fi`),
 		Prompts:        []PromptCase{{Input: "Say OK.", Expected: "OK"}},
+		attemptSpacing: testAttemptSpacing,
 	}
 
 	ch, err := r.Run(context.Background())
@@ -38,6 +41,7 @@ func TestRunnerReportsConfiguredAttemptsAfterAllFailures(t *testing.T) {
 		Config:         cfg,
 		commandBuilder: staticCommand("echo NO"),
 		Prompts:        []PromptCase{{Input: "Say OK.", Expected: "OK"}},
+		attemptSpacing: testAttemptSpacing,
 	}
 
 	ch, err := r.Run(context.Background())
@@ -61,6 +65,7 @@ func TestRunnerZeroLoopCountRetriesUntilSuccess(t *testing.T) {
 		Config:         cfg,
 		commandBuilder: staticCommand(`n=$(cat tries 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > tries; if [ "$n" -lt 4 ]; then echo NO; else echo OK; fi`),
 		Prompts:        []PromptCase{{Input: "Say OK.", Expected: "OK"}},
+		attemptSpacing: testAttemptSpacing,
 	}
 
 	ch, err := r.Run(context.Background())
@@ -155,6 +160,7 @@ func TestRunnerEmitsAttemptEventsBeforeFinalResult(t *testing.T) {
 		Config:         cfg,
 		commandBuilder: staticCommand(`n=$(cat tries 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > tries; if [ "$n" -lt 2 ]; then echo NO; else echo OK; fi`),
 		Prompts:        []PromptCase{{Input: "Say OK.", Expected: "OK"}},
+		attemptSpacing: testAttemptSpacing,
 	}
 
 	events, err := r.RunEvents(context.Background())
@@ -187,7 +193,8 @@ func TestRunnerAttemptDurationsArePerAttempt(t *testing.T) {
 		Config: cfg,
 		commandBuilder: staticCommand(`n=$(cat tries 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > tries; ` +
 			`if [ "$n" -eq 1 ]; then sleep 1; echo NO; else echo OK; fi`),
-		Prompts: []PromptCase{{Input: "Say OK.", Expected: "OK"}},
+		Prompts:        []PromptCase{{Input: "Say OK.", Expected: "OK"}},
+		attemptSpacing: testAttemptSpacing,
 	}
 
 	events, err := r.RunEvents(context.Background())
@@ -208,6 +215,70 @@ func TestRunnerAttemptDurationsArePerAttempt(t *testing.T) {
 	}
 	if attempts[1].DurationMS >= attempts[0].DurationMS {
 		t.Fatalf("second attempt duration = %dms, want per-attempt duration shorter than first attempt %dms", attempts[1].DurationMS, attempts[0].DurationMS)
+	}
+}
+
+func TestRunnerSpacesAttemptsBySendTime(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Models = []string{"a"}
+	cfg.ModelLoopCounts = map[string]int{"a": 2}
+	spacing := 80 * time.Millisecond
+	r := Runner{
+		Config:         cfg,
+		commandBuilder: staticCommand("echo NO"),
+		Prompts:        []PromptCase{{Input: "Say OK.", Expected: "OK"}},
+		attemptSpacing: spacing,
+	}
+
+	events, err := r.RunEvents(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var attempts []Result
+	for event := range events {
+		if event.Type == EventAttempt {
+			attempts = append(attempts, event.Result)
+		}
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("attempt count = %d, want 2: %#v", len(attempts), attempts)
+	}
+	if got := attempts[1].AttemptStarted.Sub(attempts[0].AttemptStarted); got < spacing {
+		t.Fatalf("attempt send spacing = %s, want at least %s", got, spacing)
+	}
+}
+
+func TestRunnerCancelDuringAttemptSpacingDoesNotStartNextAttempt(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Models = []string{"a"}
+	cfg.ModelLoopCounts = map[string]int{"a": 2}
+	r := Runner{
+		Config:         cfg,
+		commandBuilder: staticCommand("echo NO"),
+		Prompts:        []PromptCase{{Input: "Say OK.", Expected: "OK"}},
+		attemptSpacing: time.Second,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	events, err := r.RunEvents(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := <-events
+	if first.Type != EventAttempt || first.Result.Attempts != 1 {
+		t.Fatalf("first event = %#v, want attempt 1", first)
+	}
+	cancel()
+
+	var rest []Event
+	for event := range events {
+		rest = append(rest, event)
+	}
+	if len(rest) != 1 {
+		t.Fatalf("remaining event count = %d, want 1: %#v", len(rest), rest)
+	}
+	if rest[0].Type != EventResult || rest[0].Result.Attempts != 1 || rest[0].Result.Error != context.Canceled.Error() {
+		t.Fatalf("final event = %#v, want canceled result without attempt 2", rest[0])
 	}
 }
 
