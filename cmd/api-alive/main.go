@@ -53,7 +53,8 @@ type probeRequest struct {
 }
 
 type stopProbeRequest struct {
-	Model string `json:"model"`
+	Model  string   `json:"model"`
+	Models []string `json:"models"`
 }
 
 type probeResponse struct {
@@ -308,7 +309,8 @@ func (s *server) handleStopProbe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	models := alive.AddModels(nil, []string{req.Model})
+	models := alive.AddModels(nil, req.Models)
+	models = alive.AddModels(models, []string{req.Model})
 	if len(models) == 0 {
 		writeError(w, http.StatusBadRequest, "select at least one running model to stop")
 		return

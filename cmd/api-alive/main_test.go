@@ -116,6 +116,7 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`optimisticStarts: new Map()`,
 		`optimisticStops: new Map()`,
 		`localStopLogs: new Map()`,
+		`function updateModelHeaderControls`,
 		`function reconcileOptimisticStarts`,
 		`function snapshotClientState`,
 		`function restoreClientState`,
@@ -124,23 +125,33 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`function reconcileOptimisticStops`,
 		`state.localStopLogs.forEach((entry, model) =>`,
 		`state.localStopLogs.delete(model);`,
-		`expires_at: localTrustExpiresAt()`,
+		`expires_at: expiresAt`,
 		`next.running_models = next.running_models.filter(runningModel => runningModel !== model);`,
 		`function optimisticStopProbe`,
+		`function optimisticStopProbes`,
 		`state.optimisticStops.set(model, entry);`,
 		`state.localStopLogs.set(model, entry);`,
 		`state.localStopLogs.delete(model);`,
-		`optimisticStopProbe(model);`,
+		`optimisticStopProbes(models);`,
 		`restoreClientState(previous);`,
 		`function runnableSelectedModels`,
+		`function hasClearableResults`,
+		`function stoppableModels`,
+		`$('clearResultsBtn').disabled = state.editing || !hasClearableResults();`,
+		`$('stopAllBtn').disabled = state.editing || stoppableModels().length === 0;`,
 		`return [...state.selected].filter(model => model);`,
 		`btn.disabled = state.editing || !state.runningModels.has(btn.dataset.stopOne)`,
 		`async function stopProbe`,
+		`async function stopAllProbes`,
 		`id="clearResultsBtn"`,
+		`id="stopAllBtn"`,
 		`data-stop-one`,
 		`data-select-all`,
 		`Clear results`,
+		`Stop all`,
 		`/api/probe/results/clear`,
+		`/api/probe/stop`,
+		`JSON.stringify({ models })`,
 		`class="header-actions"`,
 		`class="header-actions models-actions"`,
 		`.app { max-width: 1280px; margin: 0 auto; padding: 24px; }`,
@@ -219,7 +230,7 @@ func TestIndexHTMLOptimisticallyClearsResults(t *testing.T) {
 	}
 }
 
-func TestIndexHTMLMovesNotificationsToLogHeaderAndRemovesGlobalStop(t *testing.T) {
+func TestIndexHTMLMovesNotificationsToLogHeaderAndAddsStopAll(t *testing.T) {
 	runtimeHeader := `<h2>Runtime</h2>
           <div class="header-actions">
             <button class="secondary" id="reloadBtn">Refresh</button>
@@ -234,8 +245,18 @@ func TestIndexHTMLMovesNotificationsToLogHeaderAndRemovesGlobalStop(t *testing.T
 	if !strings.Contains(indexHTML, logHeader) {
 		t.Fatal("notification button should be in the log header")
 	}
+	editIndex := strings.Index(indexHTML, `id="editModelsBtn"`)
+	runIndex := strings.Index(indexHTML, `id="runSelectedBtn"`)
+	clearIndex := strings.Index(indexHTML, `id="clearResultsBtn"`)
+	stopIndex := strings.Index(indexHTML, `id="stopAllBtn"`)
+	if editIndex < 0 || runIndex < 0 || clearIndex < 0 || stopIndex < 0 {
+		t.Fatal("models header controls are missing")
+	}
+	if !(editIndex < runIndex && runIndex < clearIndex && clearIndex < stopIndex) {
+		t.Fatalf("models header controls are in the wrong order: edit=%d run=%d clear=%d stop=%d", editIndex, runIndex, clearIndex, stopIndex)
+	}
 	if strings.Contains(indexHTML, `id="stopProbeBtn"`) || strings.Contains(indexHTML, `Stop task`) {
-		t.Fatal("global stop task control must be removed")
+		t.Fatal("old global stop task control must remain removed")
 	}
 }
 
@@ -572,6 +593,11 @@ func TestProbeEndpointAllowsDistinctConcurrentRequestsRejectsDuplicateAndStops(t
 	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/probe/stop", strings.NewReader(`{"model":"model-a"}`)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("stop status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/probe/stop", strings.NewReader(`{"models":["model-b"]}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stop all status = %d, body = %q", rec.Code, rec.Body.String())
 	}
 	rec = httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/probe/stop", strings.NewReader(`{}`)))
