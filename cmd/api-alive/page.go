@@ -207,6 +207,11 @@ const indexHTML = `<!doctype html>
       border-radius: 8px;
       overflow: hidden;
       background: #fff;
+      transition: border-color .18s ease, box-shadow .18s ease;
+    }
+    .model-group.drop-target {
+      border-color: rgba(37, 99, 235, .45);
+      box-shadow: inset 0 0 0 1px rgba(37, 99, 235, .18);
     }
     .model-group-header {
       min-height: 38px;
@@ -1037,16 +1042,18 @@ const indexHTML = `<!doctype html>
         '</div><div class="model-group-body"><table class="model-table model-editor"><thead><tr>' +
         '<th class="drag"></th><th class="model-heading">Model</th><th class="retry-count">Retries</th><th class="editor-actions">Actions</th>' +
         '</tr></thead><tbody data-drop-group="' + groupIndex + '"></tbody></table></div>';
-      section.querySelector('[data-toggle-group]').addEventListener('click', () => toggleGroupCollapsed(groupIndex));
+      section.querySelector('[data-toggle-group]').addEventListener('click', event => toggleGroupCollapsed(Number(event.currentTarget.dataset.toggleGroup || 0)));
       const nameInput = section.querySelector('[data-group-name]');
       nameInput.addEventListener('input', () => {
+        const groupIndex = Number(nameInput.dataset.groupName || 0);
         const group = state.draftGroups[groupIndex];
         if (!group) return;
         group.name = nameInput.value.trim() || defaultGroupName();
         updateAddGroupSelect();
       });
       const tbody = section.querySelector('[data-drop-group]');
-      installDropTarget(tbody, groupIndex);
+      installDropTarget(tbody);
+      installGroupDropTarget(section);
       return section;
     }
     function updateModelEditorGroup(section, group, groupIndex) {
@@ -1104,6 +1111,7 @@ const indexHTML = `<!doctype html>
       row.addEventListener('dragover', event => {
         if (!state.dragModel || state.dragModel === model) return;
         event.preventDefault();
+        event.stopPropagation();
         event.dataTransfer.dropEffect = 'move';
         const targetGroupIndex = Number(row.closest('[data-drop-group]')?.dataset.dropGroup || 0);
         const targetGroup = state.draftGroups[targetGroupIndex];
@@ -1129,10 +1137,12 @@ const indexHTML = `<!doctype html>
       del.title = state.editLockedModels.has(model) ? 'Running when editing started' : '';
       row.classList.toggle('dragging', state.dragModel === model);
     }
-    function installDropTarget(tbody, groupIndex) {
+    function installDropTarget(tbody) {
       tbody.addEventListener('dragover', event => {
         if (!state.dragModel || tbody.querySelector('[data-model-row]')) return;
         event.preventDefault();
+        event.stopPropagation();
+        const groupIndex = Number(tbody.dataset.dropGroup || 0);
         tbody.classList.add('drag-over');
         if (moveDraftModelTo(state.dragModel, groupIndex, 0)) renderModelsAnimated();
       });
@@ -1143,10 +1153,31 @@ const indexHTML = `<!doctype html>
         cleanupDragState();
       });
     }
+    function installGroupDropTarget(section) {
+      section.addEventListener('dragover', event => {
+        if (!state.dragModel || event.target.closest('[data-model-row]')) return;
+        event.preventDefault();
+        const groupIndex = Number(section.dataset.editGroup || 0);
+        const group = state.draftGroups[groupIndex];
+        if (!group) return;
+        section.classList.add('drop-target');
+        event.dataTransfer.dropEffect = 'move';
+        if (moveDraftModelTo(state.dragModel, groupIndex, group.models.length)) renderModelsAnimated();
+      });
+      section.addEventListener('dragleave', event => {
+        if (!section.contains(event.relatedTarget)) section.classList.remove('drop-target');
+      });
+      section.addEventListener('drop', event => {
+        event.preventDefault();
+        section.classList.remove('drop-target');
+        cleanupDragState();
+      });
+    }
     function cleanupDragState() {
       state.dragModel = '';
       document.querySelectorAll('.dragging').forEach(row => row.classList.remove('dragging'));
       document.querySelectorAll('.drag-over').forEach(row => row.classList.remove('drag-over'));
+      document.querySelectorAll('.drop-target').forEach(row => row.classList.remove('drop-target'));
     }
     function moveDraftModelTo(model, targetGroupIndex, targetIndex) {
       if (!state.editing || !model) return false;
