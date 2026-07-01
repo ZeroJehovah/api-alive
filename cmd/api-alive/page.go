@@ -190,14 +190,14 @@ const indexHTML = `<!doctype html>
     .model-table .model-heading { width: 30ch; }
     .model-table input[type="checkbox"] { width: 16px; height: 16px; min-height: 16px; padding: 0; display: block; }
     .model-table button.table-action { min-height: 24px; padding: 0 7px; }
-    .attempt-limit-select { width: 5.25ch; min-width: 5.25ch; min-height: 24px; padding: 0 6px; text-align: center; text-align-last: center; font-size: 12px; background: #fff; }
+    .attempt-limit-select { width: 62px; min-width: 62px; min-height: 24px; padding: 0 22px 0 10px; text-align: left; text-align-last: left; font-size: 12px; background: #fff; }
     .model-editor .model-heading { width: auto; }
     .editor-actions { width: 76px; }
     .check { width: 34px; }
     .drag { width: 42px; }
     .result { width: 118px; }
     .progress { width: 78px; }
-    .attempt-limit { width: 66px; }
+    .attempt-limit { width: 76px; }
     .result-time { width: 154px; }
     .row-actions { width: 108px; }
     .row-action-group { display: flex; gap: 4px; align-items: center; }
@@ -934,8 +934,19 @@ const indexHTML = `<!doctype html>
       if (digits === '') return 1;
       return Math.max(0, Math.min(99, Number(digits)));
     }
+    const loopCountChoices = [0, 1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 99];
+    function normalizeLoopCountChoice(value) {
+      const count = normalizeLoopCount(value);
+      let best = loopCountChoices[0];
+      loopCountChoices.forEach(choice => {
+        const bestDistance = Math.abs(best - count);
+        const choiceDistance = Math.abs(choice - count);
+        if (choiceDistance < bestDistance || (choiceDistance === bestDistance && choice > best)) best = choice;
+      });
+      return best;
+    }
     function loopCountValue(value) {
-      return String(normalizeLoopCount(value));
+      return String(normalizeLoopCountChoice(value));
     }
     function loopCountLabel(count) {
       return normalizeLoopCount(count) === 0 ? '∞' : String(normalizeLoopCount(count));
@@ -943,10 +954,10 @@ const indexHTML = `<!doctype html>
     function modelLoopCounts() { return state.config?.model_loop_counts || {}; }
     function loopCountFor(model) {
       const counts = modelLoopCounts();
-      return normalizeLoopCount(Object.prototype.hasOwnProperty.call(counts, model) ? counts[model] : 1);
+      return normalizeLoopCountChoice(Object.prototype.hasOwnProperty.call(counts, model) ? counts[model] : 1);
     }
     function draftLoopCountFor(model) {
-      return normalizeLoopCount(Object.prototype.hasOwnProperty.call(state.draftModelLoopCounts, model) ? state.draftModelLoopCounts[model] : 1);
+      return normalizeLoopCountChoice(Object.prototype.hasOwnProperty.call(state.draftModelLoopCounts, model) ? state.draftModelLoopCounts[model] : 1);
     }
     function mergeDirtyLoopCounts(config) {
       if (!config) return config;
@@ -959,7 +970,7 @@ const indexHTML = `<!doctype html>
           return;
         }
         if (currentCounts[model] !== undefined) {
-          merged.model_loop_counts[model] = normalizeLoopCount(currentCounts[model]);
+          merged.model_loop_counts[model] = normalizeLoopCountChoice(currentCounts[model]);
         }
       });
       return merged;
@@ -974,16 +985,16 @@ const indexHTML = `<!doctype html>
     function loopCountsForModels(models, source) {
       const out = {};
       models.forEach(model => {
-        out[model] = normalizeLoopCount(Object.prototype.hasOwnProperty.call(source || {}, model) ? source[model] : 1);
+        out[model] = normalizeLoopCountChoice(Object.prototype.hasOwnProperty.call(source || {}, model) ? source[model] : 1);
       });
       return out;
     }
     function loopCountOptions(value) {
-      const selected = normalizeLoopCount(value);
+      const selected = normalizeLoopCountChoice(value);
       let html = '';
-      for (let count = 0; count <= 99; count += 1) {
+      loopCountChoices.forEach(count => {
         html += '<option value="' + count + '"' + (count === selected ? ' selected' : '') + '>' + count + '</option>';
-      }
+      });
       return html;
     }
     function loopCountControl(model, value, draft) {
@@ -1153,7 +1164,7 @@ const indexHTML = `<!doctype html>
       retryCell.innerHTML = loopCountControl(model, draftLoopCountFor(model), true);
       const retryControl = retryCell.querySelector('[data-draft-attempt-limit]');
       retryControl.addEventListener('change', () => {
-        state.draftModelLoopCounts[model] = normalizeLoopCount(retryControl.value);
+        state.draftModelLoopCounts[model] = normalizeLoopCountChoice(retryControl.value);
       });
 
       const actionCell = document.createElement('td');
@@ -1413,7 +1424,7 @@ const indexHTML = `<!doctype html>
       const retryControl = retryCell.querySelector('[data-attempt-limit]');
       retryControl.addEventListener('change', () => {
         if (!state.config.model_loop_counts) state.config.model_loop_counts = {};
-        state.config.model_loop_counts[model] = normalizeLoopCount(retryControl.value);
+        state.config.model_loop_counts[model] = normalizeLoopCountChoice(retryControl.value);
         state.dirtyLoopCounts.add(model);
       });
 
