@@ -1,5 +1,6 @@
 {
   "models": ["gpt-5"],
+  "model_groups": [{"name": "Default", "models": ["gpt-5"]}],
   "model_loop_counts": {"gpt-5": 1},
   "timeout_seconds": 120,
   "codex_command": "codex",

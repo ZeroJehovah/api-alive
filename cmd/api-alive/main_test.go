@@ -146,7 +146,7 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`id="clearResultsBtn"`,
 		`id="stopAllBtn"`,
 		`data-stop-one`,
-		`data-select-all`,
+		`data-select-group`,
 		`Clear results`,
 		`Stop all`,
 		`/api/probe/results/clear`,
@@ -165,10 +165,13 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`<span class="pill run"><span class="live-dot"></span>Running</span>`,
 		`id="editModelsBtn"`,
 		`id="cancelEditBtn"`,
-		`.add-form input, .add-form button`,
-		`flex: 1 1 320px`,
+		`.add-form input, .add-form button, .add-form select`,
+		`flex: 1 1 430px`,
 		`editing: false`,
+		`draftGroups: []`,
 		`draftModels: []`,
+		`collapsedGroups: new Set()`,
+		`dragModel: ''`,
 		`draftModelLoopCounts: {}`,
 		`dirtyLoopCounts: new Set()`,
 		`editLockedModels: new Set()`,
@@ -187,16 +190,30 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`displayAttemptProgress`,
 		`.loop-count-input`,
 		`model_loop_counts`,
-		`<table class="model-table">`,
-		`<table class="model-table model-editor">`,
+		`model_groups`,
+		`class="model-groups"`,
+		`className = 'model-group'`,
+		`data-toggle-group`,
+		`data-select-group`,
+		`id="newModelGroup"`,
+		`id="addGroupBtn"`,
+		`function configGroups`,
+		`function flattenGroups`,
+		`function toggleGroupCollapsed`,
+		`function toggleGroupSelection`,
+		`function renderModelsAnimated`,
+		`function moveDraftModelTo`,
+		`draggable = true`,
+		`dragstart`,
+		`dragover`,
+		`dragend`,
+		`drag-handle`,
+		`dragging`,
 		`.model-table .model-heading { width: 30ch; }`,
 		`.model-table input[type="checkbox"]`,
-		`data-move="up"`,
-		`data-move="down"`,
 		`data-delete-model`,
 		`async function toggleModelEdit`,
 		`function cancelModelEdit`,
-		`async function moveModel`,
 	} {
 		if !strings.Contains(indexHTML, want) {
 			t.Fatalf("indexHTML missing %q", want)
@@ -333,6 +350,32 @@ func TestConfigEndpointPreservesModelOrder(t *testing.T) {
 		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
 	}
 	assertConfigModels(t, configPath, []string{"model-b", "model-a", "model-c"})
+}
+
+func TestConfigEndpointPersistsModelGroups(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	srv := newServer(configPath)
+	body := bytes.NewBufferString(`{"models":["model-b","model-a","model-c"],"model_groups":[{"name":"fast","models":["model-b","model-a"]},{"name":"slow","models":["model-c"]}],"model_loop_counts":{"model-b":2,"model-a":3,"model-c":4},"timeout_seconds":30,"codex_command":"codex","listen_addr":"127.0.0.1:0","max_output_chars":4000}`)
+
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/config", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	cfg, err := alive.LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantGroups := []alive.ModelGroup{
+		{Name: "fast", Models: []string{"model-b", "model-a"}},
+		{Name: "slow", Models: []string{"model-c"}},
+	}
+	if !reflect.DeepEqual(cfg.ModelGroups, wantGroups) {
+		t.Fatalf("model groups = %#v, want %#v", cfg.ModelGroups, wantGroups)
+	}
+	if !reflect.DeepEqual(cfg.Models, []string{"model-b", "model-a", "model-c"}) {
+		t.Fatalf("models = %#v", cfg.Models)
+	}
 }
 
 func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *testing.T) {

@@ -34,16 +34,18 @@ type appState struct {
 }
 
 type configRequest struct {
-	Models          []string       `json:"models"`
-	ModelLoopCounts map[string]int `json:"model_loop_counts"`
-	TimeoutSeconds  int            `json:"timeout_seconds"`
-	CodexCommand    string         `json:"codex_command"`
-	MaxOutputChars  int            `json:"max_output_chars"`
-	ListenAddr      string         `json:"listen_addr"`
+	Models          []string           `json:"models"`
+	ModelGroups     []alive.ModelGroup `json:"model_groups"`
+	ModelLoopCounts map[string]int     `json:"model_loop_counts"`
+	TimeoutSeconds  int                `json:"timeout_seconds"`
+	CodexCommand    string             `json:"codex_command"`
+	MaxOutputChars  int                `json:"max_output_chars"`
+	ListenAddr      string             `json:"listen_addr"`
 }
 
 type modelsRequest struct {
 	Models []string `json:"models"`
+	Group  string   `json:"group"`
 }
 
 type probeRequest struct {
@@ -190,7 +192,8 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	cfg.Models = alive.AddModels(nil, req.Models)
+	cfg.ModelGroups = alive.NormalizeModelGroups(req.ModelGroups, req.Models)
+	cfg.Models = alive.FlattenModelGroups(cfg.ModelGroups)
 	cfg.ModelLoopCounts = req.ModelLoopCounts
 	cfg.TimeoutSeconds = req.TimeoutSeconds
 	cfg.CodexCommand = strings.TrimSpace(req.CodexCommand)
@@ -217,7 +220,8 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		cfg.Models = alive.AddModels(cfg.Models, req.Models)
+		cfg.ModelGroups = alive.AddModelsToGroup(cfg.ModelGroups, req.Models, req.Group)
+		cfg.Models = alive.FlattenModelGroups(cfg.ModelGroups)
 		if err := alive.SaveConfig(s.configPath, cfg); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -234,7 +238,8 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		cfg.Models = alive.RemoveModels(cfg.Models, req.Models)
+		cfg.ModelGroups = alive.RemoveModelsFromGroups(cfg.ModelGroups, req.Models)
+		cfg.Models = alive.FlattenModelGroups(cfg.ModelGroups)
 		if err := alive.SaveConfig(s.configPath, cfg); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
