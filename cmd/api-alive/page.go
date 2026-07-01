@@ -190,14 +190,16 @@ const indexHTML = `<!doctype html>
     .model-table .model-heading { width: 30ch; }
     .model-table input[type="checkbox"] { width: 16px; height: 16px; min-height: 16px; padding: 0; display: block; }
     .model-table button.table-action { min-height: 24px; padding: 0 7px; }
-    .loop-count-input { width: 5.25ch; min-width: 5.25ch; min-height: 24px; padding: 0 8px; text-align: center; font-size: 12px; }
+    .attempt-limit-field { width: 5.25ch; min-width: 5.25ch; min-height: 24px; padding: 0 8px; text-align: center; font-size: 12px; appearance: textfield; }
+    .attempt-limit-field::-webkit-outer-spin-button,
+    .attempt-limit-field::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
     .model-editor .model-heading { width: auto; }
     .editor-actions { width: 76px; }
     .check { width: 34px; }
     .drag { width: 42px; }
     .result { width: 118px; }
     .progress { width: 78px; }
-    .retry-count { width: 66px; }
+    .attempt-limit { width: 66px; }
     .result-time { width: 154px; }
     .row-actions { width: 108px; }
     .row-action-group { display: flex; gap: 4px; align-items: center; }
@@ -979,8 +981,8 @@ const indexHTML = `<!doctype html>
       return out;
     }
     function loopCountInput(model, value, draft) {
-      const attr = draft ? 'data-draft-loop-count' : 'data-loop-count';
-      return '<input class="loop-count-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-keepassxc-ignore="true" data-lpignore="true" data-1p-ignore="true" ' + attr + '="' + escapeText(model) + '" value="' + escapeText(loopCountInputValue(value)) + '" title="Max attempts; 0 means unlimited">';
+      const attr = draft ? 'data-draft-attempt-limit' : 'data-attempt-limit';
+      return '<input class="attempt-limit-field" type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="99" step="1" maxlength="2" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-keepassxc-ignore="true" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" ' + attr + '="' + escapeText(model) + '" value="' + escapeText(loopCountInputValue(value)) + '" title="0 means unlimited">';
     }
     function modelTableNeedsReset(mode) {
       return state.modelTableMode !== mode;
@@ -1087,7 +1089,7 @@ const indexHTML = `<!doctype html>
         '<input class="group-name-input" data-group-name="0" maxlength="32">' +
         '<span class="group-count"></span>' +
         '</div><div class="model-group-body"><div class="model-group-body-inner"><table class="model-table model-editor"><thead><tr>' +
-        '<th class="drag"></th><th class="model-heading">Model</th><th class="retry-count">Retries</th><th class="editor-actions">Actions</th>' +
+        '<th class="drag"></th><th class="model-heading">Model</th><th class="attempt-limit">Retries</th><th class="editor-actions">Actions</th>' +
         '</tr></thead><tbody data-drop-group="0"></tbody></table></div></div>';
       section.querySelector('[data-toggle-group]').addEventListener('click', event => toggleGroupCollapsed(Number(event.currentTarget.dataset.toggleGroup || 0)));
       const nameInput = section.querySelector('[data-group-name]');
@@ -1140,9 +1142,10 @@ const indexHTML = `<!doctype html>
       modelCell.appendChild(text(model));
 
       const retryCell = document.createElement('td');
-      retryCell.className = 'retry-count';
+      retryCell.className = 'attempt-limit';
+      retryCell.setAttribute('data-keepassxc-ignore', 'true');
       retryCell.innerHTML = loopCountInput(model, draftLoopCountFor(model), true);
-      const retryInput = retryCell.querySelector('[data-draft-loop-count]');
+      const retryInput = retryCell.querySelector('[data-draft-attempt-limit]');
       retryInput.addEventListener('input', () => {
         retryInput.value = String(retryInput.value).replace(/\D/g, '').slice(0, 2);
         state.draftModelLoopCounts[model] = normalizeLoopCount(retryInput.value);
@@ -1179,7 +1182,7 @@ const indexHTML = `<!doctype html>
     function updateModelEditorRow(model) {
       const row = modelRow(model);
       if (!row) return;
-      const retryInput = row.querySelector('[data-draft-loop-count]');
+      const retryInput = row.querySelector('[data-draft-attempt-limit]');
       if (document.activeElement !== retryInput && retryInput.value !== loopCountInputValue(draftLoopCountFor(model))) {
         retryInput.value = loopCountInputValue(draftLoopCountFor(model));
       }
@@ -1331,7 +1334,7 @@ const indexHTML = `<!doctype html>
         '<label class="group-select"><input data-select-group="' + groupIndex + '" type="checkbox">Select group</label>' +
         '</div><div class="model-group-body"><div class="model-group-body-inner"><table class="model-table"><thead><tr>' +
         '<th class="check"></th><th class="model-heading">Model</th><th class="result">Result</th><th class="progress">Progress</th>' +
-        '<th class="result-time">Result time</th><th class="retry-count">Retries</th><th class="row-actions"></th>' +
+        '<th class="result-time">Result time</th><th class="attempt-limit">Retries</th><th class="row-actions"></th>' +
         '</tr></thead><tbody></tbody></table></div></div>';
       section.querySelector('[data-toggle-group]').addEventListener('click', () => toggleGroupCollapsed(groupIndex));
       section.querySelector('[data-select-group]').addEventListener('change', event => toggleGroupSelection(groupIndex, event.target.checked));
@@ -1399,9 +1402,10 @@ const indexHTML = `<!doctype html>
       timeCell.className = 'result-time';
 
       const retryCell = document.createElement('td');
-      retryCell.className = 'retry-count';
+      retryCell.className = 'attempt-limit';
+      retryCell.setAttribute('data-keepassxc-ignore', 'true');
       retryCell.innerHTML = loopCountInput(model, loopCountFor(model), false);
-      const retryInput = retryCell.querySelector('[data-loop-count]');
+      const retryInput = retryCell.querySelector('[data-attempt-limit]');
       retryInput.addEventListener('input', () => {
         retryInput.value = String(retryInput.value).replace(/\D/g, '').slice(0, 2);
         if (!state.config.model_loop_counts) state.config.model_loop_counts = {};
@@ -1431,7 +1435,7 @@ const indexHTML = `<!doctype html>
       replaceChildrenWithHTML(resultCell, statusPill(model));
       row.querySelector('.progress').textContent = displayProgress(model, res);
       row.querySelector('.result-time').textContent = res ? displayDateTime(res.updated_at) : '';
-      const retryInput = row.querySelector('[data-loop-count]');
+      const retryInput = row.querySelector('[data-attempt-limit]');
       if (document.activeElement !== retryInput && retryInput.value !== loopCountInputValue(loopCountFor(model))) {
         retryInput.value = loopCountInputValue(loopCountFor(model));
       }
