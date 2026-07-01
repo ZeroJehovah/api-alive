@@ -203,6 +203,8 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`function toggleGroupSelection`,
 		`function renderModelsAnimated`,
 		`function moveDraftModelTo`,
+		`function installGroupDropTarget`,
+		`drop-target`,
 		`draggable = true`,
 		`dragstart`,
 		`dragover`,
