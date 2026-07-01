@@ -228,6 +228,20 @@ const indexHTML = `<!doctype html>
       border-bottom: 1px solid var(--line);
     }
     .model-group-header.collapsed { border-bottom: 0; }
+    .model-group-body {
+      display: grid;
+      grid-template-rows: 1fr;
+      opacity: 1;
+      transition: grid-template-rows .2s ease, opacity .16s ease;
+    }
+    .model-group-body.collapsed {
+      grid-template-rows: 0fr;
+      opacity: 0;
+    }
+    .model-group-body-inner {
+      min-height: 0;
+      overflow: hidden;
+    }
     .group-toggle {
       width: 26px;
       min-width: 26px;
@@ -966,7 +980,7 @@ const indexHTML = `<!doctype html>
     }
     function loopCountInput(model, value, draft) {
       const attr = draft ? 'data-draft-loop-count' : 'data-loop-count';
-      return '<input class="loop-count-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" ' + attr + '="' + escapeText(model) + '" value="' + escapeText(loopCountInputValue(value)) + '" title="Max attempts; 0 means unlimited">';
+      return '<input class="loop-count-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-keepassxc-ignore="true" data-lpignore="true" data-1p-ignore="true" ' + attr + '="' + escapeText(model) + '" value="' + escapeText(loopCountInputValue(value)) + '" title="Max attempts; 0 means unlimited">';
     }
     function modelTableNeedsReset(mode) {
       return state.modelTableMode !== mode;
@@ -1072,9 +1086,9 @@ const indexHTML = `<!doctype html>
         '<button type="button" class="group-toggle" data-toggle-group="0">▾</button>' +
         '<input class="group-name-input" data-group-name="0" maxlength="32">' +
         '<span class="group-count"></span>' +
-        '</div><div class="model-group-body"><table class="model-table model-editor"><thead><tr>' +
+        '</div><div class="model-group-body"><div class="model-group-body-inner"><table class="model-table model-editor"><thead><tr>' +
         '<th class="drag"></th><th class="model-heading">Model</th><th class="retry-count">Retries</th><th class="editor-actions">Actions</th>' +
-        '</tr></thead><tbody data-drop-group="0"></tbody></table></div>';
+        '</tr></thead><tbody data-drop-group="0"></tbody></table></div></div>';
       section.querySelector('[data-toggle-group]').addEventListener('click', event => toggleGroupCollapsed(Number(event.currentTarget.dataset.toggleGroup || 0)));
       const nameInput = section.querySelector('[data-group-name]');
       nameInput.addEventListener('input', () => {
@@ -1105,7 +1119,8 @@ const indexHTML = `<!doctype html>
       if (document.activeElement !== input && input.value !== (group.name || defaultGroupName())) input.value = group.name || defaultGroupName();
       section.querySelector('.group-count').textContent = group.models.length + ' model(s)';
       const body = section.querySelector('.model-group-body');
-      body.hidden = collapsed;
+      body.classList.toggle('collapsed', collapsed);
+      body.setAttribute('aria-hidden', String(collapsed));
       const tbody = section.querySelector('[data-drop-group]');
       tbody.dataset.dropGroup = String(groupIndex);
       section.classList.toggle('group-dragging', state.dragGroupID === group._id);
@@ -1314,10 +1329,10 @@ const indexHTML = `<!doctype html>
         '<button type="button" class="group-toggle" data-toggle-group="' + groupIndex + '">▾</button>' +
         '<div class="group-title"><span></span><span class="group-count"></span></div>' +
         '<label class="group-select"><input data-select-group="' + groupIndex + '" type="checkbox">Select group</label>' +
-        '</div><div class="model-group-body"><table class="model-table"><thead><tr>' +
+        '</div><div class="model-group-body"><div class="model-group-body-inner"><table class="model-table"><thead><tr>' +
         '<th class="check"></th><th class="model-heading">Model</th><th class="result">Result</th><th class="progress">Progress</th>' +
         '<th class="result-time">Result time</th><th class="retry-count">Retries</th><th class="row-actions"></th>' +
-        '</tr></thead><tbody></tbody></table></div>';
+        '</tr></thead><tbody></tbody></table></div></div>';
       section.querySelector('[data-toggle-group]').addEventListener('click', () => toggleGroupCollapsed(groupIndex));
       section.querySelector('[data-select-group]').addEventListener('change', event => toggleGroupSelection(groupIndex, event.target.checked));
       return section;
@@ -1338,7 +1353,9 @@ const indexHTML = `<!doctype html>
       const selectedCount = group.models.filter(model => state.selected.has(model)).length;
       select.checked = group.models.length > 0 && selectedCount === group.models.length;
       select.indeterminate = selectedCount > 0 && selectedCount < group.models.length;
-      section.querySelector('.model-group-body').hidden = collapsed;
+      const body = section.querySelector('.model-group-body');
+      body.classList.toggle('collapsed', collapsed);
+      body.setAttribute('aria-hidden', String(collapsed));
     }
     function toggleGroupCollapsed(groupIndex) {
       const group = visibleGroups()[groupIndex];
