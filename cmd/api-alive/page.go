@@ -213,6 +213,11 @@ const indexHTML = `<!doctype html>
       border-color: rgba(37, 99, 235, .45);
       box-shadow: inset 0 0 0 1px rgba(37, 99, 235, .18);
     }
+    .model-group.group-drop-target {
+      border-color: rgba(15, 118, 110, .48);
+      box-shadow: inset 0 0 0 1px rgba(15, 118, 110, .18);
+    }
+    .model-group.group-dragging { opacity: .55; }
     .model-group-header {
       min-height: 38px;
       padding: 6px 8px;
@@ -233,6 +238,22 @@ const indexHTML = `<!doctype html>
       color: var(--text);
     }
     .group-toggle:hover { background: #f8fafc; }
+    .group-drag-handle {
+      width: 26px;
+      height: 24px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--muted);
+      cursor: grab;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+      touch-action: none;
+      font-size: 14px;
+    }
+    .group-drag-handle:active { cursor: grabbing; }
     .group-title {
       min-width: 0;
       flex: 1 1 auto;
@@ -499,7 +520,7 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftGroups: [], draftModels: [], draftModelLoopCounts: {}, dirtyLoopCounts: new Set(), editLockedModels: new Set(), collapsedGroups: new Set(), dragModel: '', optimisticStarts: new Map(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Map(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), failureFaviconPrimed: false, backgroundSuccessFavicon: false, backgroundFailedFavicon: false, handledFailureFaviconKey: '', faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
+    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftGroups: [], draftModels: [], draftModelLoopCounts: {}, nextDraftGroupID: 1, dirtyLoopCounts: new Set(), editLockedModels: new Set(), collapsedGroups: new Set(), dragModel: '', dragGroupID: '', optimisticStarts: new Map(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Map(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), failureFaviconPrimed: false, backgroundSuccessFavicon: false, backgroundFailedFavicon: false, handledFailureFaviconKey: '', faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
     const maxLogEntries = 100;
     const idlePollMS = 60000;
     const runningPollMS = 5000;
@@ -552,6 +573,12 @@ const indexHTML = `<!doctype html>
       return models;
     }
     function groupKey(index, group) { return String(index) + ':' + (group?.name || defaultGroupName()); }
+    function newDraftGroupID() { return 'group-' + state.nextDraftGroupID++; }
+    function ensureDraftGroupIDs() {
+      state.draftGroups.forEach(group => {
+        if (!group._id) group._id = newDraftGroupID();
+      });
+    }
     function text(value) { return document.createTextNode(String(value ?? '')); }
     function replaceChildrenWithHTML(element, html) {
       if (element.innerHTML !== html) element.innerHTML = html;
@@ -958,14 +985,18 @@ const indexHTML = `<!doctype html>
     function captureModelRects() {
       const first = new Map();
       document.querySelectorAll('[data-model-row]').forEach(row => {
-        first.set(row.dataset.modelRow, row.getBoundingClientRect());
+        first.set('model:' + row.dataset.modelRow, row.getBoundingClientRect());
+      });
+      document.querySelectorAll('[data-edit-group-id]').forEach(section => {
+        first.set('group:' + section.dataset.editGroupId, section.getBoundingClientRect());
       });
       return first;
     }
     function animateModelRows(first) {
       requestAnimationFrame(() => {
-        document.querySelectorAll('[data-model-row]').forEach(row => {
-          const before = first.get(row.dataset.modelRow);
+        document.querySelectorAll('[data-model-row], [data-edit-group-id]').forEach(row => {
+          const key = row.dataset.modelRow ? 'model:' + row.dataset.modelRow : 'group:' + row.dataset.editGroupId;
+          const before = first.get(key);
           if (!before) return;
           const after = row.getBoundingClientRect();
           const dx = before.left - after.left;
@@ -974,7 +1005,7 @@ const indexHTML = `<!doctype html>
           row.style.transition = 'none';
           row.style.transform = 'translate(' + dx + 'px, ' + dy + 'px)';
           requestAnimationFrame(() => {
-            row.style.transition = 'transform .18s ease, background-color .18s ease, opacity .18s ease';
+            row.style.transition = 'transform .18s ease, background-color .18s ease, opacity .18s ease, border-color .18s ease, box-shadow .18s ease';
             row.style.transform = '';
           });
         });
@@ -989,12 +1020,14 @@ const indexHTML = `<!doctype html>
       const select = $('newModelGroup');
       if (!select) return;
       const current = select.value;
-      select.innerHTML = state.draftGroups.map((group, index) => '<option value="' + index + '">' + escapeText(group.name || defaultGroupName()) + '</option>').join('');
-      if (state.draftGroups[Number(current)]) select.value = current;
-      else if (state.draftGroups.length) select.value = String(state.draftGroups.length - 1);
+      ensureDraftGroupIDs();
+      select.innerHTML = state.draftGroups.map(group => '<option value="' + escapeText(group._id) + '">' + escapeText(group.name || defaultGroupName()) + '</option>').join('');
+      if (state.draftGroups.some(group => group._id === current)) select.value = current;
+      else if (state.draftGroups.length) select.value = state.draftGroups[state.draftGroups.length - 1]._id;
     }
     function renderModelEditor(models) {
       const groups = visibleGroups();
+      ensureDraftGroupIDs();
       updateAddGroupSelect();
       if (!groups.length) {
         $('modelHost').innerHTML = '<div class="empty">No models configured.</div>';
@@ -1006,15 +1039,14 @@ const indexHTML = `<!doctype html>
         rememberModelTable('edit', models);
       }
       const host = $('modelGroups');
-      const keep = new Set(groups.map((group, index) => String(index)));
-      [...host.querySelectorAll('[data-edit-group]')].forEach(section => {
-        if (!keep.has(section.dataset.editGroup)) section.remove();
+      const keep = new Set(groups.map(group => group._id));
+      [...host.querySelectorAll('[data-edit-group-id]')].forEach(section => {
+        if (!keep.has(section.dataset.editGroupId)) section.remove();
       });
       groups.forEach((group, groupIndex) => {
-        const groupID = String(groupIndex);
-        let section = host.querySelector('[data-edit-group="' + groupID + '"]');
+        let section = host.querySelector('[data-edit-group-id="' + group._id + '"]');
         if (!section) {
-          section = createModelEditorGroup(groupIndex);
+          section = createModelEditorGroup(group);
         }
         host.appendChild(section);
         updateModelEditorGroup(section, group, groupIndex);
@@ -1031,17 +1063,18 @@ const indexHTML = `<!doctype html>
       });
       models.forEach(updateModelEditorRow);
     }
-    function createModelEditorGroup(groupIndex) {
+    function createModelEditorGroup(group) {
       const section = document.createElement('section');
       section.className = 'model-group';
-      section.dataset.editGroup = String(groupIndex);
+      section.dataset.editGroupId = group._id;
       section.innerHTML = '<div class="model-group-header">' +
-        '<button type="button" class="group-toggle" data-toggle-group="' + groupIndex + '">▾</button>' +
-        '<input class="group-name-input" data-group-name="' + groupIndex + '" maxlength="32">' +
+        '<span class="group-drag-handle" draggable="true" data-group-drag-handle title="Drag group">≡</span>' +
+        '<button type="button" class="group-toggle" data-toggle-group="0">▾</button>' +
+        '<input class="group-name-input" data-group-name="0" maxlength="32">' +
         '<span class="group-count"></span>' +
         '</div><div class="model-group-body"><table class="model-table model-editor"><thead><tr>' +
         '<th class="drag"></th><th class="model-heading">Model</th><th class="retry-count">Retries</th><th class="editor-actions">Actions</th>' +
-        '</tr></thead><tbody data-drop-group="' + groupIndex + '"></tbody></table></div>';
+        '</tr></thead><tbody data-drop-group="0"></tbody></table></div>';
       section.querySelector('[data-toggle-group]').addEventListener('click', event => toggleGroupCollapsed(Number(event.currentTarget.dataset.toggleGroup || 0)));
       const nameInput = section.querySelector('[data-group-name]');
       nameInput.addEventListener('input', () => {
@@ -1054,10 +1087,12 @@ const indexHTML = `<!doctype html>
       const tbody = section.querySelector('[data-drop-group]');
       installDropTarget(tbody);
       installGroupDropTarget(section);
+      installGroupDrag(section);
       return section;
     }
     function updateModelEditorGroup(section, group, groupIndex) {
       section.dataset.editGroup = String(groupIndex);
+      section.dataset.editGroupId = group._id;
       const key = groupKey(groupIndex, group);
       const collapsed = state.collapsedGroups.has(key);
       const header = section.querySelector('.model-group-header');
@@ -1073,6 +1108,7 @@ const indexHTML = `<!doctype html>
       body.hidden = collapsed;
       const tbody = section.querySelector('[data-drop-group]');
       tbody.dataset.dropGroup = String(groupIndex);
+      section.classList.toggle('group-dragging', state.dragGroupID === group._id);
     }
     function createModelEditorRow(model) {
       const row = document.createElement('tr');
@@ -1173,11 +1209,44 @@ const indexHTML = `<!doctype html>
         cleanupDragState();
       });
     }
+    function installGroupDrag(section) {
+      const handle = section.querySelector('[data-group-drag-handle]');
+      handle.addEventListener('dragstart', event => {
+        state.dragGroupID = section.dataset.editGroupId || '';
+        section.classList.add('group-dragging');
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', state.dragGroupID);
+      });
+      section.addEventListener('dragover', event => {
+        if (!state.dragGroupID || state.dragGroupID === section.dataset.editGroupId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.dataTransfer.dropEffect = 'move';
+        section.classList.add('group-drop-target');
+        const targetGroupIndex = Number(section.dataset.editGroup || 0);
+        const rect = section.getBoundingClientRect();
+        const targetIndex = targetGroupIndex + (event.clientY > rect.top + rect.height / 2 ? 1 : 0);
+        if (moveDraftGroupTo(state.dragGroupID, targetIndex)) renderModelsAnimated();
+      });
+      section.addEventListener('dragleave', event => {
+        if (!section.contains(event.relatedTarget)) section.classList.remove('group-drop-target');
+      });
+      section.addEventListener('drop', event => {
+        if (!state.dragGroupID) return;
+        event.preventDefault();
+        section.classList.remove('group-drop-target');
+        cleanupDragState();
+      });
+      handle.addEventListener('dragend', cleanupDragState);
+    }
     function cleanupDragState() {
       state.dragModel = '';
+      state.dragGroupID = '';
       document.querySelectorAll('.dragging').forEach(row => row.classList.remove('dragging'));
       document.querySelectorAll('.drag-over').forEach(row => row.classList.remove('drag-over'));
       document.querySelectorAll('.drop-target').forEach(row => row.classList.remove('drop-target'));
+      document.querySelectorAll('.group-dragging').forEach(row => row.classList.remove('group-dragging'));
+      document.querySelectorAll('.group-drop-target').forEach(row => row.classList.remove('group-drop-target'));
     }
     function moveDraftModelTo(model, targetGroupIndex, targetIndex) {
       if (!state.editing || !model) return false;
@@ -1192,6 +1261,19 @@ const indexHTML = `<!doctype html>
       if (sourceGroupIndex === targetGroupIndex && targetIndex > sourceIndex) targetIndex--;
       targetIndex = Math.max(0, Math.min(targetIndex, targetGroup.models.length));
       targetGroup.models.splice(targetIndex, 0, model);
+      state.draftModels = flattenGroups(groups);
+      return true;
+    }
+    function moveDraftGroupTo(groupID, targetIndex) {
+      if (!state.editing || !groupID) return false;
+      const groups = state.draftGroups;
+      const sourceIndex = groups.findIndex(group => group._id === groupID);
+      if (sourceIndex < 0) return false;
+      if (targetIndex === sourceIndex || targetIndex === sourceIndex + 1) return false;
+      const [group] = groups.splice(sourceIndex, 1);
+      if (targetIndex > sourceIndex) targetIndex--;
+      targetIndex = Math.max(0, Math.min(targetIndex, groups.length));
+      groups.splice(targetIndex, 0, group);
       state.draftModels = flattenGroups(groups);
       return true;
     }
@@ -1631,8 +1713,10 @@ const indexHTML = `<!doctype html>
       name = name.trim();
       if (!name || !state.editing) return;
       if (!state.draftModels.includes(name)) {
-        if (!state.draftGroups.length) state.draftGroups.push({ name: defaultGroupName(), models: [] });
-        const groupIndex = Math.max(0, Math.min(Number($('newModelGroup').value) || 0, state.draftGroups.length - 1));
+        if (!state.draftGroups.length) state.draftGroups.push({ _id: newDraftGroupID(), name: defaultGroupName(), models: [] });
+        const selectedGroupID = $('newModelGroup').value;
+        let groupIndex = state.draftGroups.findIndex(group => group._id === selectedGroupID);
+        if (groupIndex < 0) groupIndex = Math.max(0, state.draftGroups.length - 1);
         state.draftGroups[groupIndex].models.push(name);
         state.draftModels = flattenGroups(state.draftGroups);
         state.draftModelLoopCounts[name] = 1;
@@ -1651,9 +1735,9 @@ const indexHTML = `<!doctype html>
         index++;
         name = base + ' ' + index;
       }
-      state.draftGroups.push({ name, models: [] });
+      state.draftGroups.push({ _id: newDraftGroupID(), name, models: [] });
       updateAddGroupSelect();
-      $('newModelGroup').value = String(state.draftGroups.length - 1);
+      $('newModelGroup').value = state.draftGroups[state.draftGroups.length - 1]._id;
       renderModels();
       setMessage('Added group ' + name);
     }
@@ -1673,8 +1757,9 @@ const indexHTML = `<!doctype html>
       if (!state.config) return;
       if (!state.editing) {
         state.editing = true;
-        state.draftGroups = configGroups(state.config).map(group => ({ name: group.name, models: [...group.models] }));
-        if (!state.draftGroups.length) state.draftGroups = [{ name: defaultGroupName(), models: [] }];
+        state.nextDraftGroupID = 1;
+        state.draftGroups = configGroups(state.config).map(group => ({ _id: newDraftGroupID(), name: group.name, models: [...group.models] }));
+        if (!state.draftGroups.length) state.draftGroups = [{ _id: newDraftGroupID(), name: defaultGroupName(), models: [] }];
         state.draftModels = flattenGroups(state.draftGroups);
         state.draftModelLoopCounts = loopCountsForModels(state.draftModels, state.config.model_loop_counts || {});
         state.editLockedModels = new Set(state.runningModels);
