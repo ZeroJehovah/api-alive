@@ -30,7 +30,7 @@ const indexHTML = `<!doctype html>
       color: var(--text);
       letter-spacing: 0;
     }
-    button, input { font: inherit; }
+    button, input, select { font: inherit; }
     button {
       border: 1px solid transparent;
       background: var(--accent);
@@ -58,7 +58,7 @@ const indexHTML = `<!doctype html>
       padding: 0 8px;
       font-size: 12px;
     }
-    input {
+    input, select {
       width: 100%;
       min-height: 36px;
       border: 1px solid var(--line);
@@ -68,7 +68,7 @@ const indexHTML = `<!doctype html>
       padding: 7px 10px;
       outline: none;
     }
-    input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15, 118, 110, .12); }
+    input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15, 118, 110, .12); }
     label { font-size: 12px; color: var(--muted); display: grid; gap: 6px; }
     .app { max-width: 1280px; margin: 0 auto; padding: 24px; }
     .top {
@@ -169,8 +169,8 @@ const indexHTML = `<!doctype html>
       padding: 0 10px;
       font-size: 12px;
     }
-    .add-form { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 8px; flex: 1 1 320px; }
-    .add-form input, .add-form button {
+    .add-form { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(96px, 140px) auto; gap: 8px; flex: 1 1 430px; }
+    .add-form input, .add-form button, .add-form select {
       min-height: 30px;
       padding: 0 10px;
       font-size: 12px;
@@ -192,16 +192,87 @@ const indexHTML = `<!doctype html>
     .model-table button.table-action { min-height: 24px; padding: 0 7px; }
     .loop-count-input { width: 5.25ch; min-width: 5.25ch; min-height: 24px; padding: 0 8px; text-align: center; font-size: 12px; }
     .model-editor .model-heading { width: auto; }
-    .editor-actions { width: 150px; }
+    .editor-actions { width: 76px; }
     .check { width: 34px; }
-    .order { width: 92px; }
+    .drag { width: 42px; }
     .result { width: 118px; }
     .progress { width: 78px; }
     .retry-count { width: 66px; }
     .result-time { width: 154px; }
     .row-actions { width: 108px; }
     .row-action-group { display: flex; gap: 4px; align-items: center; }
-    .move-actions { display: flex; gap: 4px; }
+    .model-groups { display: grid; gap: 12px; }
+    .model-group {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+    }
+    .model-group-header {
+      min-height: 38px;
+      padding: 6px 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #fbfcfe;
+      border-bottom: 1px solid var(--line);
+    }
+    .model-group-header.collapsed { border-bottom: 0; }
+    .group-toggle {
+      width: 26px;
+      min-width: 26px;
+      min-height: 26px;
+      padding: 0;
+      border-color: var(--line);
+      background: #fff;
+      color: var(--text);
+    }
+    .group-toggle:hover { background: #f8fafc; }
+    .group-title {
+      min-width: 0;
+      flex: 1 1 auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .group-title span:first-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .group-count { color: var(--muted); font-weight: 500; }
+    .group-select {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .group-select input { width: 16px; height: 16px; min-height: 16px; padding: 0; }
+    .group-name-input { max-width: 260px; min-height: 28px; padding: 0 8px; font-size: 12px; font-weight: 600; }
+    .drag-handle {
+      width: 26px;
+      height: 24px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--muted);
+      cursor: grab;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+      touch-action: none;
+    }
+    .drag-handle:active { cursor: grabbing; }
+    .model-editor tr {
+      transition: transform .18s ease, background-color .18s ease, opacity .18s ease;
+    }
+    .model-editor tr.dragging { opacity: .5; background: rgba(37, 99, 235, .08); }
+    .model-editor tbody.drag-over { outline: 2px dashed rgba(37, 99, 235, .35); outline-offset: -3px; }
     .pill {
       display: inline-flex;
       align-items: center;
@@ -327,7 +398,7 @@ const indexHTML = `<!doctype html>
       .toolbar .actions { width: 100%; }
       .toolbar .actions button { flex: 1; }
       th.progress, td.progress, th.result-time, td.result-time { display: none; }
-      .order { width: 86px; }
+      .drag { width: 42px; }
       .row-actions { width: 108px; }
     }
   </style>
@@ -377,8 +448,10 @@ const indexHTML = `<!doctype html>
             <span class="pill selection-count" id="selectedCount">0/0</span>
             <form class="add-form" id="addForm" hidden>
               <input id="newModel" placeholder="gpt-5 or vendor/gpt-5.5">
+              <select id="newModelGroup" title="Target group"></select>
               <button type="submit">Add</button>
             </form>
+            <button class="secondary" id="addGroupBtn" type="button" hidden>Add group</button>
             <button class="secondary" id="editModelsBtn" type="button">Edit</button>
             <button class="secondary" id="cancelEditBtn" type="button" hidden>Cancel</button>
             <button id="runSelectedBtn">Run selected</button>
@@ -421,7 +494,7 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftModels: [], draftModelLoopCounts: {}, dirtyLoopCounts: new Set(), editLockedModels: new Set(), optimisticStarts: new Map(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Map(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), failureFaviconPrimed: false, backgroundSuccessFavicon: false, backgroundFailedFavicon: false, handledFailureFaviconKey: '', faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
+    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftGroups: [], draftModels: [], draftModelLoopCounts: {}, dirtyLoopCounts: new Set(), editLockedModels: new Set(), collapsedGroups: new Set(), dragModel: '', optimisticStarts: new Map(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Map(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), failureFaviconPrimed: false, backgroundSuccessFavicon: false, backgroundFailedFavicon: false, handledFailureFaviconKey: '', faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
     const maxLogEntries = 100;
     const idlePollMS = 60000;
     const runningPollMS = 5000;
@@ -450,7 +523,30 @@ const indexHTML = `<!doctype html>
       return date.getFullYear() + '-' + twoDigits(date.getMonth() + 1) + '-' + twoDigits(date.getDate()) + ' ' +
         twoDigits(date.getHours()) + ':' + twoDigits(date.getMinutes()) + ':' + twoDigits(date.getSeconds());
     }
-    function visibleModels() { return state.editing ? state.draftModels : (state.config?.models || []); }
+    function visibleModels() { return state.editing ? state.draftModels : flattenGroups(visibleGroups()); }
+    function visibleGroups() { return state.editing ? state.draftGroups : configGroups(state.config); }
+    function defaultGroupName() { return 'Default'; }
+    function configGroups(config) {
+      const groups = (config?.model_groups || []).map(group => ({
+        name: String(group.name || defaultGroupName()).trim() || defaultGroupName(),
+        models: [...(group.models || [])],
+      })).filter(group => group.models.length > 0);
+      if (groups.length) return groups;
+      const models = [...(config?.models || [])];
+      return models.length ? [{ name: defaultGroupName(), models }] : [];
+    }
+    function flattenGroups(groups) {
+      const seen = new Set();
+      const models = [];
+      (groups || []).forEach(group => (group.models || []).forEach(model => {
+        if (!seen.has(model)) {
+          seen.add(model);
+          models.push(model);
+        }
+      }));
+      return models;
+    }
+    function groupKey(index, group) { return String(index) + ':' + (group?.name || defaultGroupName()); }
     function text(value) { return document.createTextNode(String(value ?? '')); }
     function replaceChildrenWithHTML(element, html) {
       if (element.innerHTML !== html) element.innerHTML = html;
@@ -694,7 +790,6 @@ const indexHTML = `<!doctype html>
       updateModelHeaderControls();
       document.querySelectorAll('[data-run-one]').forEach(btn => btn.disabled = state.editing);
       document.querySelectorAll('[data-stop-one]').forEach(btn => btn.disabled = state.editing || !state.runningModels.has(btn.dataset.stopOne));
-      document.querySelectorAll('[data-move]').forEach(btn => { btn.disabled = btn.dataset.boundary === 'true'; });
       renderRunningModels();
     }
     function renderRunningModels() {
@@ -730,11 +825,13 @@ const indexHTML = `<!doctype html>
       const models = visibleModels();
       $('selectedCount').textContent = state.editing ? 'Editing' : state.selected.size + '/' + models.length;
       updateModelHeaderControls();
-      const selectAll = document.querySelector('[data-select-all]');
-      if (selectAll) {
-        selectAll.checked = models.length > 0 && state.selected.size === models.length;
-        selectAll.indeterminate = state.selected.size > 0 && state.selected.size < models.length;
-      }
+      document.querySelectorAll('[data-select-group]').forEach(selectAll => {
+        const group = visibleGroups()[Number(selectAll.dataset.selectGroup)];
+        const groupModels = group?.models || [];
+        const selectedCount = groupModels.filter(model => state.selected.has(model)).length;
+        selectAll.checked = groupModels.length > 0 && selectedCount === groupModels.length;
+        selectAll.indeterminate = selectedCount > 0 && selectedCount < groupModels.length;
+      });
     }
     function updateModelHeaderControls() {
       $('runSelectedBtn').disabled = state.editing || runnableSelectedModels().length === 0;
@@ -744,6 +841,7 @@ const indexHTML = `<!doctype html>
       $('stopAllBtn').disabled = state.editing || stoppableModels().length === 0;
       $('stopAllBtn').hidden = state.editing;
       $('addForm').hidden = !state.editing;
+      $('addGroupBtn').hidden = !state.editing;
       $('cancelEditBtn').hidden = !state.editing;
       $('cancelEditBtn').disabled = false;
       $('editModelsBtn').disabled = !state.config;
@@ -838,10 +936,10 @@ const indexHTML = `<!doctype html>
       const attr = draft ? 'data-draft-loop-count' : 'data-loop-count';
       return '<input class="loop-count-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" ' + attr + '="' + escapeText(model) + '" value="' + escapeText(loopCountInputValue(value)) + '" title="Max attempts; 0 means unlimited">';
     }
-    function modelTableNeedsReset(mode, models) {
-      return state.modelTableMode !== mode || state.modelRowOrder.join('\n') !== models.join('\n');
+    function modelTableNeedsReset(mode) {
+      return state.modelTableMode !== mode;
     }
-    function rememberModelTable(mode, models) {
+    function rememberModelTable(mode, models = []) {
       state.modelTableMode = mode;
       state.modelRowOrder = [...models];
     }
@@ -852,23 +950,131 @@ const indexHTML = `<!doctype html>
     function modelRow(model) {
       return [...document.querySelectorAll('[data-model-row]')].find(row => row.dataset.modelRow === model) || null;
     }
+    function captureModelRects() {
+      const first = new Map();
+      document.querySelectorAll('[data-model-row]').forEach(row => {
+        first.set(row.dataset.modelRow, row.getBoundingClientRect());
+      });
+      return first;
+    }
+    function animateModelRows(first) {
+      requestAnimationFrame(() => {
+        document.querySelectorAll('[data-model-row]').forEach(row => {
+          const before = first.get(row.dataset.modelRow);
+          if (!before) return;
+          const after = row.getBoundingClientRect();
+          const dx = before.left - after.left;
+          const dy = before.top - after.top;
+          if (!dx && !dy) return;
+          row.style.transition = 'none';
+          row.style.transform = 'translate(' + dx + 'px, ' + dy + 'px)';
+          requestAnimationFrame(() => {
+            row.style.transition = 'transform .18s ease, background-color .18s ease, opacity .18s ease';
+            row.style.transform = '';
+          });
+        });
+      });
+    }
+    function renderModelsAnimated() {
+      const first = captureModelRects();
+      renderModels();
+      animateModelRows(first);
+    }
+    function updateAddGroupSelect() {
+      const select = $('newModelGroup');
+      if (!select) return;
+      const current = select.value;
+      select.innerHTML = state.draftGroups.map((group, index) => '<option value="' + index + '">' + escapeText(group.name || defaultGroupName()) + '</option>').join('');
+      if (state.draftGroups[Number(current)]) select.value = current;
+      else if (state.draftGroups.length) select.value = String(state.draftGroups.length - 1);
+    }
     function renderModelEditor(models) {
-      if (!models.length) {
+      const groups = visibleGroups();
+      updateAddGroupSelect();
+      if (!groups.length) {
         $('modelHost').innerHTML = '<div class="empty">No models configured.</div>';
         resetModelTableState();
         return;
       }
-      if (modelTableNeedsReset('edit', models)) {
-        $('modelHost').innerHTML = '<table class="model-table model-editor"><thead><tr><th class="model-heading">Model</th><th class="retry-count">Retries</th><th class="editor-actions">Actions</th></tr></thead><tbody id="modelRows"></tbody></table>';
-        const tbody = $('modelRows');
-        models.forEach(model => tbody.appendChild(createModelEditorRow(model)));
+      if (modelTableNeedsReset('edit')) {
+        $('modelHost').innerHTML = '<div class="model-groups model-editor" id="modelGroups"></div>';
         rememberModelTable('edit', models);
       }
-      models.forEach((model, index) => updateModelEditorRow(model, index, models.length));
+      const host = $('modelGroups');
+      const keep = new Set(groups.map((group, index) => String(index)));
+      [...host.querySelectorAll('[data-edit-group]')].forEach(section => {
+        if (!keep.has(section.dataset.editGroup)) section.remove();
+      });
+      groups.forEach((group, groupIndex) => {
+        const groupID = String(groupIndex);
+        let section = host.querySelector('[data-edit-group="' + groupID + '"]');
+        if (!section) {
+          section = createModelEditorGroup(groupIndex);
+        }
+        host.appendChild(section);
+        updateModelEditorGroup(section, group, groupIndex);
+        const tbody = section.querySelector('tbody');
+        group.models.forEach(model => {
+          let row = modelRow(model);
+          if (!row) row = createModelEditorRow(model);
+          tbody.appendChild(row);
+          updateModelEditorRow(model);
+        });
+        [...tbody.querySelectorAll('[data-model-row]')].forEach(row => {
+          if (!group.models.includes(row.dataset.modelRow)) row.remove();
+        });
+      });
+      models.forEach(updateModelEditorRow);
+    }
+    function createModelEditorGroup(groupIndex) {
+      const section = document.createElement('section');
+      section.className = 'model-group';
+      section.dataset.editGroup = String(groupIndex);
+      section.innerHTML = '<div class="model-group-header">' +
+        '<button type="button" class="group-toggle" data-toggle-group="' + groupIndex + '">▾</button>' +
+        '<input class="group-name-input" data-group-name="' + groupIndex + '" maxlength="32">' +
+        '<span class="group-count"></span>' +
+        '</div><div class="model-group-body"><table class="model-table model-editor"><thead><tr>' +
+        '<th class="drag"></th><th class="model-heading">Model</th><th class="retry-count">Retries</th><th class="editor-actions">Actions</th>' +
+        '</tr></thead><tbody data-drop-group="' + groupIndex + '"></tbody></table></div>';
+      section.querySelector('[data-toggle-group]').addEventListener('click', () => toggleGroupCollapsed(groupIndex));
+      const nameInput = section.querySelector('[data-group-name]');
+      nameInput.addEventListener('input', () => {
+        const group = state.draftGroups[groupIndex];
+        if (!group) return;
+        group.name = nameInput.value.trim() || defaultGroupName();
+        updateAddGroupSelect();
+      });
+      const tbody = section.querySelector('[data-drop-group]');
+      installDropTarget(tbody, groupIndex);
+      return section;
+    }
+    function updateModelEditorGroup(section, group, groupIndex) {
+      section.dataset.editGroup = String(groupIndex);
+      const key = groupKey(groupIndex, group);
+      const collapsed = state.collapsedGroups.has(key);
+      const header = section.querySelector('.model-group-header');
+      header.classList.toggle('collapsed', collapsed);
+      const toggle = section.querySelector('[data-toggle-group]');
+      toggle.dataset.toggleGroup = String(groupIndex);
+      toggle.textContent = collapsed ? '▸' : '▾';
+      const input = section.querySelector('[data-group-name]');
+      input.dataset.groupName = String(groupIndex);
+      if (document.activeElement !== input && input.value !== (group.name || defaultGroupName())) input.value = group.name || defaultGroupName();
+      section.querySelector('.group-count').textContent = group.models.length + ' model(s)';
+      const body = section.querySelector('.model-group-body');
+      body.hidden = collapsed;
+      const tbody = section.querySelector('[data-drop-group]');
+      tbody.dataset.dropGroup = String(groupIndex);
     }
     function createModelEditorRow(model) {
       const row = document.createElement('tr');
       row.dataset.modelRow = model;
+      row.draggable = true;
+
+      const dragCell = document.createElement('td');
+      dragCell.className = 'drag';
+      dragCell.innerHTML = '<span class="drag-handle" title="Drag to reorder">≡</span>';
 
       const modelCell = document.createElement('td');
       modelCell.className = 'model';
@@ -886,48 +1092,154 @@ const indexHTML = `<!doctype html>
 
       const actionCell = document.createElement('td');
       actionCell.className = 'editor-actions';
-      actionCell.innerHTML = '<div class="move-actions">' +
-        '<button type="button" class="secondary table-action" data-move="up" data-model="' + escapeText(model) + '">Up</button>' +
-        '<button type="button" class="secondary table-action" data-move="down" data-model="' + escapeText(model) + '">Down</button>' +
-        '<button type="button" class="secondary table-action" data-delete-model="' + escapeText(model) + '">Delete</button>' +
-        '</div>';
-      actionCell.querySelector('[data-move="up"]').addEventListener('click', () => moveModel(model, 'up'));
-      actionCell.querySelector('[data-move="down"]').addEventListener('click', () => moveModel(model, 'down'));
+      actionCell.innerHTML = '<button type="button" class="secondary table-action" data-delete-model="' + escapeText(model) + '">Delete</button>';
       actionCell.querySelector('[data-delete-model]').addEventListener('click', () => deleteModel(model));
 
-      row.append(modelCell, retryCell, actionCell);
+      row.addEventListener('dragstart', event => {
+        state.dragModel = model;
+        row.classList.add('dragging');
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', model);
+      });
+      row.addEventListener('dragover', event => {
+        if (!state.dragModel || state.dragModel === model) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        const targetGroupIndex = Number(row.closest('[data-drop-group]')?.dataset.dropGroup || 0);
+        const targetGroup = state.draftGroups[targetGroupIndex];
+        if (!targetGroup) return;
+        const rect = row.getBoundingClientRect();
+        const targetIndex = targetGroup.models.indexOf(model) + (event.clientY > rect.top + rect.height / 2 ? 1 : 0);
+        if (moveDraftModelTo(state.dragModel, targetGroupIndex, targetIndex)) renderModelsAnimated();
+      });
+      row.addEventListener('dragend', cleanupDragState);
+
+      row.append(dragCell, modelCell, retryCell, actionCell);
       return row;
     }
-    function updateModelEditorRow(model, index, total) {
+    function updateModelEditorRow(model) {
       const row = modelRow(model);
       if (!row) return;
       const retryInput = row.querySelector('[data-draft-loop-count]');
       if (document.activeElement !== retryInput && retryInput.value !== loopCountInputValue(draftLoopCountFor(model))) {
         retryInput.value = loopCountInputValue(draftLoopCountFor(model));
       }
-      const up = row.querySelector('[data-move="up"]');
-      const down = row.querySelector('[data-move="down"]');
       const del = row.querySelector('[data-delete-model]');
-      up.disabled = index === 0;
-      up.dataset.boundary = String(index === 0);
-      down.disabled = index === total - 1;
-      down.dataset.boundary = String(index === total - 1);
       del.disabled = state.editLockedModels.has(model);
       del.title = state.editLockedModels.has(model) ? 'Running when editing started' : '';
+      row.classList.toggle('dragging', state.dragModel === model);
+    }
+    function installDropTarget(tbody, groupIndex) {
+      tbody.addEventListener('dragover', event => {
+        if (!state.dragModel || tbody.querySelector('[data-model-row]')) return;
+        event.preventDefault();
+        tbody.classList.add('drag-over');
+        if (moveDraftModelTo(state.dragModel, groupIndex, 0)) renderModelsAnimated();
+      });
+      tbody.addEventListener('dragleave', () => tbody.classList.remove('drag-over'));
+      tbody.addEventListener('drop', event => {
+        event.preventDefault();
+        tbody.classList.remove('drag-over');
+        cleanupDragState();
+      });
+    }
+    function cleanupDragState() {
+      state.dragModel = '';
+      document.querySelectorAll('.dragging').forEach(row => row.classList.remove('dragging'));
+      document.querySelectorAll('.drag-over').forEach(row => row.classList.remove('drag-over'));
+    }
+    function moveDraftModelTo(model, targetGroupIndex, targetIndex) {
+      if (!state.editing || !model) return false;
+      const groups = state.draftGroups;
+      const sourceGroupIndex = groups.findIndex(group => group.models.includes(model));
+      const targetGroup = groups[targetGroupIndex];
+      if (sourceGroupIndex < 0 || !targetGroup) return false;
+      const sourceGroup = groups[sourceGroupIndex];
+      const sourceIndex = sourceGroup.models.indexOf(model);
+      if (sourceGroupIndex === targetGroupIndex && (targetIndex === sourceIndex || targetIndex === sourceIndex + 1)) return false;
+      sourceGroup.models.splice(sourceIndex, 1);
+      if (sourceGroupIndex === targetGroupIndex && targetIndex > sourceIndex) targetIndex--;
+      targetIndex = Math.max(0, Math.min(targetIndex, targetGroup.models.length));
+      targetGroup.models.splice(targetIndex, 0, model);
+      state.draftModels = flattenGroups(groups);
+      return true;
     }
     function createModelsTable(models) {
-      $('modelHost').innerHTML = '<table class="model-table"><thead><tr>' +
-        '<th class="check"><input data-select-all type="checkbox" title="Select all"></th>' +
-        '<th class="model-heading">Model</th><th class="result">Result</th><th class="progress">Progress</th>' +
-        '<th class="result-time">Result time</th><th class="retry-count">Retries</th><th class="row-actions"></th>' +
-        '</tr></thead><tbody id="modelRows"></tbody></table>';
-      const tbody = $('modelRows');
-      models.forEach(model => tbody.appendChild(createModelRow(model)));
-      document.querySelector('[data-select-all]').addEventListener('change', event => {
-        state.selected = event.target.checked ? new Set(visibleModels()) : new Set();
-        renderModels();
+      const groups = visibleGroups();
+      if (modelTableNeedsReset('view')) {
+        $('modelHost').innerHTML = '<div class="model-groups" id="modelGroups"></div>';
+        rememberModelTable('view', models);
+      }
+      const host = $('modelGroups');
+      const keep = new Set(groups.map((group, index) => String(index)));
+      [...host.querySelectorAll('[data-view-group]')].forEach(section => {
+        if (!keep.has(section.dataset.viewGroup)) section.remove();
+      });
+      groups.forEach((group, groupIndex) => {
+        const groupID = String(groupIndex);
+        let section = host.querySelector('[data-view-group="' + groupID + '"]');
+        if (!section) section = createModelViewGroup(groupIndex);
+        host.appendChild(section);
+        updateModelViewGroup(section, group, groupIndex);
+        const tbody = section.querySelector('tbody');
+        group.models.forEach(model => {
+          let row = modelRow(model);
+          if (!row) row = createModelRow(model);
+          tbody.appendChild(row);
+        });
+        [...tbody.querySelectorAll('[data-model-row]')].forEach(row => {
+          if (!group.models.includes(row.dataset.modelRow)) row.remove();
+        });
       });
       rememberModelTable('view', models);
+    }
+    function createModelViewGroup(groupIndex) {
+      const section = document.createElement('section');
+      section.className = 'model-group';
+      section.dataset.viewGroup = String(groupIndex);
+      section.innerHTML = '<div class="model-group-header">' +
+        '<button type="button" class="group-toggle" data-toggle-group="' + groupIndex + '">▾</button>' +
+        '<div class="group-title"><span></span><span class="group-count"></span></div>' +
+        '<label class="group-select"><input data-select-group="' + groupIndex + '" type="checkbox">Select group</label>' +
+        '</div><div class="model-group-body"><table class="model-table"><thead><tr>' +
+        '<th class="check"></th><th class="model-heading">Model</th><th class="result">Result</th><th class="progress">Progress</th>' +
+        '<th class="result-time">Result time</th><th class="retry-count">Retries</th><th class="row-actions"></th>' +
+        '</tr></thead><tbody></tbody></table></div>';
+      section.querySelector('[data-toggle-group]').addEventListener('click', () => toggleGroupCollapsed(groupIndex));
+      section.querySelector('[data-select-group]').addEventListener('change', event => toggleGroupSelection(groupIndex, event.target.checked));
+      return section;
+    }
+    function updateModelViewGroup(section, group, groupIndex) {
+      section.dataset.viewGroup = String(groupIndex);
+      const key = groupKey(groupIndex, group);
+      const collapsed = state.collapsedGroups.has(key);
+      const header = section.querySelector('.model-group-header');
+      header.classList.toggle('collapsed', collapsed);
+      const toggle = section.querySelector('[data-toggle-group]');
+      toggle.dataset.toggleGroup = String(groupIndex);
+      toggle.textContent = collapsed ? '▸' : '▾';
+      section.querySelector('.group-title span:first-child').textContent = group.name || defaultGroupName();
+      section.querySelector('.group-count').textContent = group.models.length + ' model(s)';
+      const select = section.querySelector('[data-select-group]');
+      select.dataset.selectGroup = String(groupIndex);
+      const selectedCount = group.models.filter(model => state.selected.has(model)).length;
+      select.checked = group.models.length > 0 && selectedCount === group.models.length;
+      select.indeterminate = selectedCount > 0 && selectedCount < group.models.length;
+      section.querySelector('.model-group-body').hidden = collapsed;
+    }
+    function toggleGroupCollapsed(groupIndex) {
+      const group = visibleGroups()[groupIndex];
+      if (!group) return;
+      const key = groupKey(groupIndex, group);
+      if (state.collapsedGroups.has(key)) state.collapsedGroups.delete(key);
+      else state.collapsedGroups.add(key);
+      renderModels();
+    }
+    function toggleGroupSelection(groupIndex, checked) {
+      const group = visibleGroups()[groupIndex];
+      if (!group || state.editing) return;
+      group.models.forEach(model => checked ? state.selected.add(model) : state.selected.delete(model));
+      renderModels();
     }
     function createModelRow(model) {
       const row = document.createElement('tr');
@@ -1009,7 +1321,7 @@ const indexHTML = `<!doctype html>
         resetModelTableState();
         return;
       }
-      if (modelTableNeedsReset('view', models)) createModelsTable(models);
+      createModelsTable(models);
       models.forEach(updateModelRow);
       updateSelectedCount();
       setBusy(state.running);
@@ -1270,6 +1582,8 @@ const indexHTML = `<!doctype html>
     }
     async function saveRuntime() {
       const cfg = { ...state.config };
+      cfg.model_groups = configGroups(cfg);
+      cfg.models = flattenGroups(cfg.model_groups);
       cfg.codex_command = $('codexCommand').value.trim() || 'codex';
       cfg.listen_addr = $('listenAddr').value.trim() || '0.0.0.0:8080';
       cfg.timeout_seconds = Number($('timeoutSeconds').value) || 120;
@@ -1286,37 +1600,51 @@ const indexHTML = `<!doctype html>
       name = name.trim();
       if (!name || !state.editing) return;
       if (!state.draftModels.includes(name)) {
-        state.draftModels.push(name);
+        if (!state.draftGroups.length) state.draftGroups.push({ name: defaultGroupName(), models: [] });
+        const groupIndex = Math.max(0, Math.min(Number($('newModelGroup').value) || 0, state.draftGroups.length - 1));
+        state.draftGroups[groupIndex].models.push(name);
+        state.draftModels = flattenGroups(state.draftGroups);
         state.draftModelLoopCounts[name] = 1;
       }
       $('newModel').value = '';
       renderModels();
       setMessage('Added ' + name);
     }
+    function addModelGroup() {
+      if (!state.editing) return;
+      const base = 'Group';
+      let index = state.draftGroups.length + 1;
+      let name = base + ' ' + index;
+      const names = new Set(state.draftGroups.map(group => group.name));
+      while (names.has(name)) {
+        index++;
+        name = base + ' ' + index;
+      }
+      state.draftGroups.push({ name, models: [] });
+      updateAddGroupSelect();
+      $('newModelGroup').value = String(state.draftGroups.length - 1);
+      renderModels();
+      setMessage('Added group ' + name);
+    }
     function deleteModel(model) {
       if (!state.editing || state.editLockedModels.has(model)) return;
-      state.draftModels = state.draftModels.filter(existing => existing !== model);
+      state.draftGroups.forEach(group => {
+        group.models = group.models.filter(existing => existing !== model);
+      });
+      state.draftGroups = state.draftGroups.filter(group => group.models.length > 0 || state.draftGroups.length === 1);
+      state.draftModels = flattenGroups(state.draftGroups);
       delete state.draftModelLoopCounts[model];
       state.selected.delete(model);
       renderModels();
       setMessage('Removed ' + model);
     }
-    async function moveModel(model, direction) {
-      if (!state.editing) return;
-      const models = [...state.draftModels];
-      const index = models.indexOf(model);
-      const nextIndex = direction === 'up' ? index - 1 : index + 1;
-      if (index < 0 || nextIndex < 0 || nextIndex >= models.length) return;
-      [models[index], models[nextIndex]] = [models[nextIndex], models[index]];
-      state.draftModels = models;
-      renderModels();
-      setMessage('Model order updated.');
-    }
     async function toggleModelEdit() {
       if (!state.config) return;
       if (!state.editing) {
         state.editing = true;
-        state.draftModels = [...(state.config.models || [])];
+        state.draftGroups = configGroups(state.config).map(group => ({ name: group.name, models: [...group.models] }));
+        if (!state.draftGroups.length) state.draftGroups = [{ name: defaultGroupName(), models: [] }];
+        state.draftModels = flattenGroups(state.draftGroups);
         state.draftModelLoopCounts = loopCountsForModels(state.draftModels, state.config.model_loop_counts || {});
         state.editLockedModels = new Set(state.runningModels);
         state.selected = new Set();
@@ -1324,9 +1652,14 @@ const indexHTML = `<!doctype html>
         setMessage('Editing models.');
         return;
       }
-      state.config = await request('/api/config', { method: 'POST', body: JSON.stringify({ ...state.config, models: state.draftModels, model_loop_counts: loopCountsForModels(state.draftModels, state.draftModelLoopCounts) }) });
+      const groups = state.draftGroups
+        .map(group => ({ name: (group.name || defaultGroupName()).trim() || defaultGroupName(), models: [...group.models] }))
+        .filter(group => group.models.length > 0);
+      const models = flattenGroups(groups);
+      state.config = await request('/api/config', { method: 'POST', body: JSON.stringify({ ...state.config, model_groups: groups, models, model_loop_counts: loopCountsForModels(models, state.draftModelLoopCounts) }) });
       clearDirtyLoopCounts();
       state.editing = false;
+      state.draftGroups = [];
       state.draftModels = [];
       state.draftModelLoopCounts = {};
       state.editLockedModels = new Set();
@@ -1339,6 +1672,7 @@ const indexHTML = `<!doctype html>
     function cancelModelEdit() {
       if (!state.editing) return;
       state.editing = false;
+      state.draftGroups = [];
       state.draftModels = [];
       state.draftModelLoopCounts = {};
       state.editLockedModels = new Set();
@@ -1412,6 +1746,7 @@ const indexHTML = `<!doctype html>
     $('saveConfigBtn').addEventListener('click', () => saveRuntime().catch(err => setMessage(err.message)));
     $('clearResultsBtn').addEventListener('click', () => clearResults().catch(err => setMessage(err.message)));
     $('addForm').addEventListener('submit', event => { event.preventDefault(); addModel($('newModel').value).catch(err => setMessage(err.message)); });
+    $('addGroupBtn').addEventListener('click', () => addModelGroup());
     $('runSelectedBtn').addEventListener('click', () => startProbe([...state.selected]).catch(err => setMessage(err.message)));
     $('stopAllBtn').addEventListener('click', () => stopAllProbes().catch(err => setMessage(err.message)));
     $('editModelsBtn').addEventListener('click', () => toggleModelEdit().catch(err => setMessage(err.message)));

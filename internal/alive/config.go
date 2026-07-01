@@ -10,6 +10,7 @@ import (
 
 type Config struct {
 	Models          []string       `json:"models"`
+	ModelGroups     []ModelGroup   `json:"model_groups,omitempty"`
 	ModelLoopCounts map[string]int `json:"model_loop_counts,omitempty"`
 	TimeoutSeconds  int            `json:"timeout_seconds"`
 	// LoopCount is kept only for backward compatibility with older config files.
@@ -17,6 +18,11 @@ type Config struct {
 	CodexCommand   string `json:"codex_command"`
 	ListenAddr     string `json:"listen_addr"`
 	MaxOutputChars int    `json:"max_output_chars"`
+}
+
+type ModelGroup struct {
+	Name   string   `json:"name"`
+	Models []string `json:"models"`
 }
 
 func DefaultConfig() Config {
@@ -67,7 +73,8 @@ func (c *Config) ApplyDefaults() {
 	if c.MaxOutputChars <= 0 {
 		c.MaxOutputChars = 4000
 	}
-	c.Models = normalizeModels(c.Models)
+	c.ModelGroups = normalizeModelGroups(c.ModelGroups, c.Models)
+	c.Models = flattenModelGroups(c.ModelGroups)
 	c.ModelLoopCounts = normalizeModelLoopCounts(c.Models, c.ModelLoopCounts, c.LoopCount)
 	c.LoopCount = 0
 }
@@ -141,6 +148,78 @@ func RemoveModels(existing, removals []string) []string {
 	return kept
 }
 
+func AddModelsToGroup(groups []ModelGroup, additions []string, groupName string) []ModelGroup {
+	out := normalizeModelGroups(groups, nil)
+	if len(out) == 0 {
+		out = []ModelGroup{{Name: defaultModelGroupName()}}
+	}
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		groupName = defaultModelGroupName()
+	}
+	target := -1
+	seen := make(map[string]struct{})
+	for groupIndex, group := range out {
+		if group.Name == groupName && target < 0 {
+			target = groupIndex
+		}
+		for _, model := range group.Models {
+			seen[model] = struct{}{}
+		}
+	}
+	if target < 0 {
+		out = append(out, ModelGroup{Name: groupName})
+		target = len(out) - 1
+	}
+	for _, model := range additions {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		out[target].Models = append(out[target].Models, model)
+		seen[model] = struct{}{}
+	}
+	return normalizeModelGroups(out, nil)
+}
+
+func RemoveModelsFromGroups(groups []ModelGroup, removals []string) []ModelGroup {
+	remove := make(map[string]struct{}, len(removals))
+	for _, model := range removals {
+		model = strings.TrimSpace(model)
+		if model != "" {
+			remove[model] = struct{}{}
+		}
+	}
+	if len(remove) == 0 {
+		return normalizeModelGroups(groups, nil)
+	}
+	out := make([]ModelGroup, 0, len(groups))
+	for _, group := range normalizeModelGroups(groups, nil) {
+		kept := group.Models[:0]
+		for _, model := range group.Models {
+			if _, ok := remove[model]; !ok {
+				kept = append(kept, model)
+			}
+		}
+		if len(kept) > 0 {
+			group.Models = kept
+			out = append(out, group)
+		}
+	}
+	return out
+}
+
+func NormalizeModelGroups(groups []ModelGroup, fallbackModels []string) []ModelGroup {
+	return normalizeModelGroups(groups, fallbackModels)
+}
+
+func FlattenModelGroups(groups []ModelGroup) []string {
+	return flattenModelGroups(groups)
+}
+
 func normalizeModels(models []string) []string {
 	out := make([]string, 0, len(models))
 	seen := make(map[string]struct{}, len(models))
@@ -156,6 +235,52 @@ func normalizeModels(models []string) []string {
 		seen[model] = struct{}{}
 	}
 	return out
+}
+
+func normalizeModelGroups(groups []ModelGroup, fallbackModels []string) []ModelGroup {
+	seen := make(map[string]struct{})
+	out := make([]ModelGroup, 0, len(groups))
+	for _, group := range groups {
+		name := strings.TrimSpace(group.Name)
+		if name == "" {
+			name = defaultModelGroupName()
+		}
+		models := make([]string, 0, len(group.Models))
+		for _, model := range group.Models {
+			model = strings.TrimSpace(model)
+			if model == "" {
+				continue
+			}
+			if _, ok := seen[model]; ok {
+				continue
+			}
+			models = append(models, model)
+			seen[model] = struct{}{}
+		}
+		if len(models) == 0 {
+			continue
+		}
+		out = append(out, ModelGroup{Name: name, Models: models})
+	}
+	if len(out) == 0 {
+		models := normalizeModels(fallbackModels)
+		if len(models) > 0 {
+			out = append(out, ModelGroup{Name: defaultModelGroupName(), Models: models})
+		}
+	}
+	return out
+}
+
+func defaultModelGroupName() string {
+	return "Default"
+}
+
+func flattenModelGroups(groups []ModelGroup) []string {
+	models := make([]string, 0)
+	for _, group := range groups {
+		models = append(models, group.Models...)
+	}
+	return normalizeModels(models)
 }
 
 func normalizeModelLoopCounts(models []string, counts map[string]int, legacyLoopCount int) map[string]int {

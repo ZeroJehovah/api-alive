@@ -44,6 +44,38 @@ func TestConfigDefaultsNewModelLoopCountToOne(t *testing.T) {
 	}
 }
 
+func TestConfigMigratesFlatModelsToDefaultGroup(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Models = []string{"a", "b", "a"}
+	cfg.ApplyDefaults()
+	wantGroups := []ModelGroup{{Name: "Default", Models: []string{"a", "b"}}}
+	if !reflect.DeepEqual(cfg.ModelGroups, wantGroups) {
+		t.Fatalf("model groups = %#v, want %#v", cfg.ModelGroups, wantGroups)
+	}
+	if !reflect.DeepEqual(cfg.Models, []string{"a", "b"}) {
+		t.Fatalf("models = %#v, want flat group order", cfg.Models)
+	}
+}
+
+func TestConfigPreservesModelGroupsAndFlattensModels(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.ModelGroups = []ModelGroup{
+		{Name: "fast", Models: []string{"a", "b"}},
+		{Name: "slow", Models: []string{"b", "c", ""}},
+	}
+	cfg.ApplyDefaults()
+	wantGroups := []ModelGroup{
+		{Name: "fast", Models: []string{"a", "b"}},
+		{Name: "slow", Models: []string{"c"}},
+	}
+	if !reflect.DeepEqual(cfg.ModelGroups, wantGroups) {
+		t.Fatalf("model groups = %#v, want %#v", cfg.ModelGroups, wantGroups)
+	}
+	if !reflect.DeepEqual(cfg.Models, []string{"a", "b", "c"}) {
+		t.Fatalf("models = %#v, want flattened groups", cfg.Models)
+	}
+}
+
 func TestConfigPreservesZeroLoopCountAndClampsToTwoDigits(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Models = []string{"a", "b", "c"}
