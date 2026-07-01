@@ -229,15 +229,15 @@ const indexHTML = `<!doctype html>
     }
     .model-group-header.collapsed { border-bottom: 0; }
     .model-group-body {
-      display: grid;
-      grid-template-rows: 1fr;
+      height: auto;
       opacity: 1;
-      transition: grid-template-rows .2s ease, opacity .16s ease;
+      overflow: hidden;
+      transition: height .22s ease, opacity .18s ease;
     }
     .model-group-body.collapsed {
-      grid-template-rows: 0fr;
       opacity: 0;
     }
+    .model-group-body.animating { will-change: height, opacity; }
     .model-group-body-inner {
       min-height: 0;
       overflow: hidden;
@@ -1058,6 +1058,42 @@ const indexHTML = `<!doctype html>
       if (state.draftGroups.some(group => group._id === current)) select.value = current;
       else if (state.draftGroups.length) select.value = state.draftGroups[state.draftGroups.length - 1]._id;
     }
+    function setGroupBodyCollapsed(body, collapsed) {
+      const initialized = body.dataset.collapseInitialized === 'true';
+      const wasCollapsed = body.dataset.collapsed === 'true';
+      body.dataset.collapsed = String(collapsed);
+      body.setAttribute('aria-hidden', String(collapsed));
+
+      if (!initialized) {
+        body.dataset.collapseInitialized = 'true';
+        body.classList.toggle('collapsed', collapsed);
+        body.style.height = collapsed ? '0px' : '';
+        return;
+      }
+      if (wasCollapsed === collapsed) {
+        body.classList.toggle('collapsed', collapsed);
+        if (!body.classList.contains('animating')) body.style.height = collapsed ? '0px' : '';
+        return;
+      }
+
+      if (body._collapseFinish) body.removeEventListener('transitionend', body._collapseFinish);
+      const startHeight = body.getBoundingClientRect().height;
+      body.classList.add('animating');
+      body.style.height = startHeight + 'px';
+      body.offsetHeight;
+      body.classList.toggle('collapsed', collapsed);
+      const targetHeight = collapsed ? 0 : body.scrollHeight;
+      body.style.height = targetHeight + 'px';
+
+      body._collapseFinish = event => {
+        if (event.target !== body || event.propertyName !== 'height') return;
+        body.classList.remove('animating');
+        body.style.height = collapsed ? '0px' : '';
+        body.removeEventListener('transitionend', body._collapseFinish);
+        body._collapseFinish = null;
+      };
+      body.addEventListener('transitionend', body._collapseFinish);
+    }
     function renderModelEditor(models) {
       const groups = visibleGroups();
       ensureDraftGroupIDs();
@@ -1138,8 +1174,7 @@ const indexHTML = `<!doctype html>
       if (document.activeElement !== input && input.value !== (group.name || defaultGroupName())) input.value = group.name || defaultGroupName();
       section.querySelector('.group-count').textContent = group.models.length + ' model(s)';
       const body = section.querySelector('.model-group-body');
-      body.classList.toggle('collapsed', collapsed);
-      body.setAttribute('aria-hidden', String(collapsed));
+      setGroupBodyCollapsed(body, collapsed);
       const tbody = section.querySelector('[data-drop-group]');
       tbody.dataset.dropGroup = String(groupIndex);
       section.classList.toggle('group-dragging', state.dragGroupID === group._id);
@@ -1373,8 +1408,7 @@ const indexHTML = `<!doctype html>
       select.checked = group.models.length > 0 && selectedCount === group.models.length;
       select.indeterminate = selectedCount > 0 && selectedCount < group.models.length;
       const body = section.querySelector('.model-group-body');
-      body.classList.toggle('collapsed', collapsed);
-      body.setAttribute('aria-hidden', String(collapsed));
+      setGroupBodyCollapsed(body, collapsed);
     }
     function toggleGroupCollapsed(groupIndex) {
       const group = visibleGroups()[groupIndex];
