@@ -190,9 +190,7 @@ const indexHTML = `<!doctype html>
     .model-table .model-heading { width: 30ch; }
     .model-table input[type="checkbox"] { width: 16px; height: 16px; min-height: 16px; padding: 0; display: block; }
     .model-table button.table-action { min-height: 24px; padding: 0 7px; }
-    .attempt-limit-field { width: 5.25ch; min-width: 5.25ch; min-height: 24px; padding: 0 8px; text-align: center; font-size: 12px; appearance: textfield; }
-    .attempt-limit-field::-webkit-outer-spin-button,
-    .attempt-limit-field::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .attempt-limit-select { width: 5.25ch; min-width: 5.25ch; min-height: 24px; padding: 0 6px; text-align: center; text-align-last: center; font-size: 12px; background: #fff; }
     .model-editor .model-heading { width: auto; }
     .editor-actions { width: 76px; }
     .check { width: 34px; }
@@ -936,7 +934,7 @@ const indexHTML = `<!doctype html>
       if (digits === '') return 1;
       return Math.max(0, Math.min(99, Number(digits)));
     }
-    function loopCountInputValue(value) {
+    function loopCountValue(value) {
       return String(normalizeLoopCount(value));
     }
     function loopCountLabel(count) {
@@ -980,9 +978,17 @@ const indexHTML = `<!doctype html>
       });
       return out;
     }
-    function loopCountInput(model, value, draft) {
+    function loopCountOptions(value) {
+      const selected = normalizeLoopCount(value);
+      let html = '';
+      for (let count = 0; count <= 99; count += 1) {
+        html += '<option value="' + count + '"' + (count === selected ? ' selected' : '') + '>' + count + '</option>';
+      }
+      return html;
+    }
+    function loopCountControl(model, value, draft) {
       const attr = draft ? 'data-draft-attempt-limit' : 'data-attempt-limit';
-      return '<input class="attempt-limit-field" type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="99" step="1" maxlength="2" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-keepassxc-ignore="true" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" ' + attr + '="' + escapeText(model) + '" value="' + escapeText(loopCountInputValue(value)) + '" title="0 means unlimited">';
+      return '<select class="attempt-limit-select" autocomplete="off" data-keepassxc-ignore="true" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" ' + attr + '="' + escapeText(model) + '" title="0 means unlimited">' + loopCountOptions(value) + '</select>';
     }
     function modelTableNeedsReset(mode) {
       return state.modelTableMode !== mode;
@@ -1144,11 +1150,10 @@ const indexHTML = `<!doctype html>
       const retryCell = document.createElement('td');
       retryCell.className = 'attempt-limit';
       retryCell.setAttribute('data-keepassxc-ignore', 'true');
-      retryCell.innerHTML = loopCountInput(model, draftLoopCountFor(model), true);
-      const retryInput = retryCell.querySelector('[data-draft-attempt-limit]');
-      retryInput.addEventListener('input', () => {
-        retryInput.value = String(retryInput.value).replace(/\D/g, '').slice(0, 2);
-        state.draftModelLoopCounts[model] = normalizeLoopCount(retryInput.value);
+      retryCell.innerHTML = loopCountControl(model, draftLoopCountFor(model), true);
+      const retryControl = retryCell.querySelector('[data-draft-attempt-limit]');
+      retryControl.addEventListener('change', () => {
+        state.draftModelLoopCounts[model] = normalizeLoopCount(retryControl.value);
       });
 
       const actionCell = document.createElement('td');
@@ -1182,9 +1187,9 @@ const indexHTML = `<!doctype html>
     function updateModelEditorRow(model) {
       const row = modelRow(model);
       if (!row) return;
-      const retryInput = row.querySelector('[data-draft-attempt-limit]');
-      if (document.activeElement !== retryInput && retryInput.value !== loopCountInputValue(draftLoopCountFor(model))) {
-        retryInput.value = loopCountInputValue(draftLoopCountFor(model));
+      const retryControl = row.querySelector('[data-draft-attempt-limit]');
+      if (document.activeElement !== retryControl && retryControl.value !== loopCountValue(draftLoopCountFor(model))) {
+        retryControl.value = loopCountValue(draftLoopCountFor(model));
       }
       const del = row.querySelector('[data-delete-model]');
       del.disabled = state.editLockedModels.has(model);
@@ -1404,12 +1409,11 @@ const indexHTML = `<!doctype html>
       const retryCell = document.createElement('td');
       retryCell.className = 'attempt-limit';
       retryCell.setAttribute('data-keepassxc-ignore', 'true');
-      retryCell.innerHTML = loopCountInput(model, loopCountFor(model), false);
-      const retryInput = retryCell.querySelector('[data-attempt-limit]');
-      retryInput.addEventListener('input', () => {
-        retryInput.value = String(retryInput.value).replace(/\D/g, '').slice(0, 2);
+      retryCell.innerHTML = loopCountControl(model, loopCountFor(model), false);
+      const retryControl = retryCell.querySelector('[data-attempt-limit]');
+      retryControl.addEventListener('change', () => {
         if (!state.config.model_loop_counts) state.config.model_loop_counts = {};
-        state.config.model_loop_counts[model] = normalizeLoopCount(retryInput.value);
+        state.config.model_loop_counts[model] = normalizeLoopCount(retryControl.value);
         state.dirtyLoopCounts.add(model);
       });
 
@@ -1435,9 +1439,9 @@ const indexHTML = `<!doctype html>
       replaceChildrenWithHTML(resultCell, statusPill(model));
       row.querySelector('.progress').textContent = displayProgress(model, res);
       row.querySelector('.result-time').textContent = res ? displayDateTime(res.updated_at) : '';
-      const retryInput = row.querySelector('[data-attempt-limit]');
-      if (document.activeElement !== retryInput && retryInput.value !== loopCountInputValue(loopCountFor(model))) {
-        retryInput.value = loopCountInputValue(loopCountFor(model));
+      const retryControl = row.querySelector('[data-attempt-limit]');
+      if (document.activeElement !== retryControl && retryControl.value !== loopCountValue(loopCountFor(model))) {
+        retryControl.value = loopCountValue(loopCountFor(model));
       }
       row.querySelector('[data-run-one]').disabled = state.editing;
       row.querySelector('[data-stop-one]').disabled = state.editing || !state.runningModels.has(model);
