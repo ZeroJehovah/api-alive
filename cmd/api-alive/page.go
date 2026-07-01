@@ -534,7 +534,7 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftGroups: [], draftModels: [], draftModelLoopCounts: {}, nextDraftGroupID: 1, dirtyLoopCounts: new Set(), editLockedModels: new Set(), collapsedGroups: new Set(), dragModel: '', dragGroupID: '', optimisticStarts: new Map(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Map(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), failureFaviconPrimed: false, backgroundSuccessFavicon: false, backgroundFailedFavicon: false, handledFailureFaviconKey: '', faviconStatus: '', modelTableMode: '', modelRowOrder: [], pendingModelRender: false };
+    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftGroups: [], draftModels: [], draftModelLoopCounts: {}, nextDraftGroupID: 1, dirtyLoopCounts: new Set(), editLockedModels: new Set(), collapsedGroups: new Set(), dragModel: '', dragGroupID: '', optimisticStarts: new Map(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Map(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), failureFaviconPrimed: false, backgroundSuccessFavicon: false, backgroundFailedFavicon: false, handledFailureFaviconKey: '', faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
     const maxLogEntries = 100;
     const idlePollMS = 60000;
     const runningPollMS = 5000;
@@ -1049,23 +1049,6 @@ const indexHTML = `<!doctype html>
       renderModels();
       animateModelRows(first);
     }
-    function attemptLimitControlHasFocus() {
-      const active = document.activeElement;
-      return !!active && active.classList.contains('attempt-limit-select');
-    }
-    function flushPendingModelRender() {
-      if (!state.pendingModelRender) return;
-      state.pendingModelRender = false;
-      renderTaskViews(true);
-    }
-    function deferModelRenderForAttemptLimit() {
-      if (!attemptLimitControlHasFocus()) return false;
-      state.pendingModelRender = true;
-      return true;
-    }
-    function installAttemptLimitFocusGuard(control) {
-      control.addEventListener('blur', () => requestAnimationFrame(flushPendingModelRender));
-    }
     function updateAddGroupSelect() {
       const select = $('newModelGroup');
       if (!select) return;
@@ -1215,10 +1198,8 @@ const indexHTML = `<!doctype html>
       retryCell.setAttribute('data-keepassxc-ignore', 'true');
       retryCell.innerHTML = loopCountControl(model, draftLoopCountFor(model), true);
       const retryControl = retryCell.querySelector('[data-draft-attempt-limit]');
-      installAttemptLimitFocusGuard(retryControl);
       retryControl.addEventListener('change', () => {
         state.draftModelLoopCounts[model] = normalizeLoopCountChoice(retryControl.value);
-        requestAnimationFrame(flushPendingModelRender);
       });
 
       const actionCell = document.createElement('td');
@@ -1475,12 +1456,10 @@ const indexHTML = `<!doctype html>
       retryCell.setAttribute('data-keepassxc-ignore', 'true');
       retryCell.innerHTML = loopCountControl(model, loopCountFor(model), false);
       const retryControl = retryCell.querySelector('[data-attempt-limit]');
-      installAttemptLimitFocusGuard(retryControl);
       retryControl.addEventListener('change', () => {
         if (!state.config.model_loop_counts) state.config.model_loop_counts = {};
         state.config.model_loop_counts[model] = normalizeLoopCountChoice(retryControl.value);
         state.dirtyLoopCounts.add(model);
-        requestAnimationFrame(flushPendingModelRender);
       });
 
       const actionCell = document.createElement('td');
@@ -1512,9 +1491,7 @@ const indexHTML = `<!doctype html>
       row.querySelector('[data-run-one]').disabled = state.editing;
       row.querySelector('[data-stop-one]').disabled = state.editing || !state.runningModels.has(model);
     }
-    function renderModels(force = false) {
-      if (!force && deferModelRenderForAttemptLimit()) return;
-      state.pendingModelRender = false;
+    function renderModels() {
       const models = visibleModels();
       updateSelectedCount();
       if (state.editing) {
@@ -1532,10 +1509,10 @@ const indexHTML = `<!doctype html>
       updateSelectedCount();
       setBusy(state.running);
     }
-    function renderTaskViews(forceModels = false) {
+    function renderTaskViews() {
       renderLog();
       renderRunningModels();
-      renderModels(forceModels);
+      renderModels();
       updateFavicon();
     }
     function fillForm(config) {
@@ -1556,8 +1533,7 @@ const indexHTML = `<!doctype html>
       state.runningModels = new Set(state.task.running_models || []);
       state.results = new Map((state.task.results || []).map(res => [res.model, res]));
       state.logEntries = (state.task.logs || []).slice(0, maxLogEntries);
-      if (attemptLimitControlHasFocus()) state.pendingModelRender = true;
-      else renderTaskViews();
+      renderTaskViews();
       connectTaskStream();
       schedulePoll();
     }
