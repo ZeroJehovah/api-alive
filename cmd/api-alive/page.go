@@ -852,7 +852,7 @@ const indexHTML = `<!doctype html>
       }
       host.innerHTML = state.logEntries.map(entry => {
         const res = entry.result || entry;
-        const status = res.success ? 'success' : 'failed';
+        const status = res.success ? 'success' : (isCanceledResult(res) ? 'canceled' : 'failed');
         const cls = res.success ? 'ok' : 'bad';
         const icon = res.success ? '✅' : '❌';
         const seconds = Math.round((res.duration_ms || 0) / 1000);
@@ -907,7 +907,11 @@ const indexHTML = `<!doctype html>
       if (state.runningModels.has(model)) return '<span class="pill run"><span class="live-dot"></span>Running</span>';
       const res = resultFor(model);
       if (!res) return '<span class="pill">Idle</span>';
-      return res.success ? '<span class="pill ok">Success (' + escapeText(displaySeconds(res.duration_ms)) + 's)</span>' : '<span class="pill bad">Failed</span>';
+      if (res.success) return '<span class="pill ok">Success (' + escapeText(displaySeconds(res.duration_ms)) + 's)</span>';
+      return '<span class="pill bad">' + (isCanceledResult(res) ? 'Canceled' : 'Failed') + '</span>';
+    }
+    function isCanceledResult(res) {
+      return res?.success === false && res.error === 'context canceled';
     }
     function activeLoopCountFor(model) {
       const counts = state.task?.loop_counts || {};
@@ -1704,7 +1708,7 @@ const indexHTML = `<!doctype html>
     }
     function isCanceledLogFor(entry, model) {
       const res = entry?.result || entry;
-      return res?.model === model && res.success === false && res.error === 'context canceled';
+      return res?.model === model && isCanceledResult(res);
     }
     function reconcileOptimisticStops(task) {
       const next = clientTaskCopy(task);
