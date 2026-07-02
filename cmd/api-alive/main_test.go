@@ -489,6 +489,31 @@ func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *tes
 	}
 }
 
+func TestProbeTaskStartDoesNotReviveCompletedRuns(t *testing.T) {
+	store := &taskStore{}
+	task, runs, err := store.start([]string{"model-a", "model-b"}, map[string]int{"model-a": 1, "model-b": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.applyEvent(task.ID, runIDByModel(t, runs, "model-b"), alive.Event{Type: alive.EventResult, Result: alive.Result{
+		Model:          "model-b",
+		Success:        true,
+		Attempts:       1,
+		DurationMS:     10,
+		AttemptResults: []alive.Result{{Model: "model-b", Success: true, Attempts: 1, DurationMS: 10}},
+	}})
+	if snap := store.snapshot(); !reflect.DeepEqual(snap.RunningModels, []string{"model-a"}) {
+		t.Fatalf("running models after model-b completed = %#v", snap.RunningModels)
+	}
+	next, _, err := store.start([]string{"model-c"}, map[string]int{"model-c": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(next.RunningModels, []string{"model-a", "model-c"}) {
+		t.Fatalf("completed model was revived as running: %#v", next.RunningModels)
+	}
+}
+
 func TestProbeTaskJSONIncludesLoopCounts(t *testing.T) {
 	store := &taskStore{}
 	task, _, err := store.start([]string{"model-a"}, map[string]int{"model-a": 3})
