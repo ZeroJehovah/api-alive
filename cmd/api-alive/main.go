@@ -593,10 +593,10 @@ func (ts *taskStore) applyEvent(taskID, runID int64, event alive.Event) {
 	}
 	if event.Type == alive.EventResult {
 		ts.task.Results = upsertResult(ts.task.Results, timestampResult(res, now))
-		ts.task.RunningModels = removeModelName(ts.task.RunningModels, res.Model)
 		if len(res.AttemptResults) == 0 {
 			ts.prependLogLocked(now, res)
 		}
+		ts.completeRunLocked(runID, res.Model, now)
 		ts.publishLocked()
 	}
 }
@@ -604,20 +604,12 @@ func (ts *taskStore) applyEvent(taskID, runID int64, event alive.Event) {
 func (ts *taskStore) finishRun(taskID, runID int64, model string) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	if ts.task.ID != taskID || !ts.isCurrentRunLocked(runID, model) {
+	if ts.task.ID != taskID {
 		return
 	}
-	delete(ts.runs, model)
-	ts.task.RunningModels = removeModelName(ts.task.RunningModels, model)
-	if len(ts.runs) > 0 {
+	if ts.completeRunLocked(runID, model, time.Now().Format(time.RFC3339)) {
 		ts.publishLocked()
-		return
 	}
-	ts.task.Running = false
-	ts.task.RunningModels = nil
-	ts.task.FinishedAt = time.Now().Format(time.RFC3339)
-	ts.runs = nil
-	ts.publishLocked()
 }
 
 func (ts *taskStore) failRun(taskID, runID int64, model, message string) {
@@ -643,6 +635,22 @@ func (ts *taskStore) failRun(taskID, runID int64, model, message string) {
 func (ts *taskStore) isCurrentRunLocked(runID int64, model string) bool {
 	run, ok := ts.runs[model]
 	return ok && run.ID == runID
+}
+
+func (ts *taskStore) completeRunLocked(runID int64, model, finishedAt string) bool {
+	if !ts.isCurrentRunLocked(runID, model) {
+		return false
+	}
+	delete(ts.runs, model)
+	ts.task.RunningModels = removeModelName(ts.task.RunningModels, model)
+	if len(ts.runs) > 0 {
+		return true
+	}
+	ts.task.Running = false
+	ts.task.RunningModels = nil
+	ts.task.FinishedAt = finishedAt
+	ts.runs = nil
+	return true
 }
 
 func (ts *taskStore) loopCountForModel(model string) int {
