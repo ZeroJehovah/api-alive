@@ -1,8 +1,11 @@
 {
   "provider": "codex",
-  "models": ["gpt-5"],
-  "model_groups": [{"name": "Default", "models": ["gpt-5"]}],
-  "model_loop_counts": {"gpt-5": 1},
+  "models": ["gpt-5", "sonnet"],
+  "model_groups": [
+    {"name": "Codex", "provider": "codex", "models": ["gpt-5"]},
+    {"name": "Claude", "provider": "claude", "models": ["sonnet"]}
+  ],
+  "model_loop_counts": {"gpt-5": 1, "sonnet": 1},
   "timeout_seconds": 120,
   "codex_command": "codex",
   "claude_command": "claude",

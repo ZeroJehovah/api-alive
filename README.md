@@ -51,8 +51,12 @@ http://<vps-ip>:8080
 ```json
 {
   "provider": "codex",
-  "models": ["gpt-5"],
-  "model_loop_counts": {"gpt-5": 1},
+  "models": ["gpt-5", "sonnet"],
+  "model_groups": [
+    {"name": "Codex", "provider": "codex", "models": ["gpt-5"]},
+    {"name": "Claude", "provider": "claude", "models": ["sonnet"]}
+  ],
+  "model_loop_counts": {"gpt-5": 1, "sonnet": 1},
   "timeout_seconds": 120,
   "codex_command": "codex",
   "claude_command": "claude",
@@ -64,8 +68,9 @@ http://<vps-ip>:8080
 字段说明：
 
 - `models`：Web 页面展示和测活时可选择的模型名。
+- `model_groups`：模型分组；每个分组通过 `provider` 指定使用 `codex` 或 `claude`，Run selected 可以跨 provider 分组并行测活。
 - `model_loop_counts`：每个模型的最大尝试次数；新增模型默认是 1，可在 Models 面板修改；任一尝试成功后立即停止该模型后续尝试。
-- `provider`：测活时使用的 CLI provider，可选 `codex` 或 `claude`。
+- `provider`：默认 CLI provider，用于旧配置迁移和新增分组默认值，可选 `codex` 或 `claude`。
 - `timeout_seconds`：单次尝试的超时时间。
 - `codex_command`：VPS 上用于调用 Codex 的命令。
 - `claude_command`：VPS 上用于调用 Claude Code 的命令。
@@ -74,13 +79,13 @@ http://<vps-ip>:8080
 
 ## 测活逻辑
 
-每个被选中的模型都会在独立临时目录中运行。命令形态为：
+每个被选中的模型都会在独立临时目录中运行，并按所属模型分组的 provider 选择 CLI。Codex 分组的命令形态为：
 
 ```sh
 codex exec --model <model> --skip-git-repo-check --ephemeral <prompt>
 ```
 
-或：
+Claude 分组的命令形态为：
 
 ```sh
 claude --model <model> --print --no-session-persistence <prompt>

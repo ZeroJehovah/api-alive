@@ -164,13 +164,18 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`.grid > .panel { min-width: 0; }`,
 		`.models-actions { flex: 1 1 auto; min-width: 0; }`,
 		`.settings input, .settings select, .settings button`,
+		`Default provider`,
 		`id="providerSelect"`,
 		`<option value="codex">Codex</option>`,
 		`<option value="claude">Claude</option>`,
 		`id="claudeCommand"`,
-		`config.provider || 'codex'`,
+		`function providerValue`,
+		`function providerLabel`,
+		`provider: providerValue(group.provider || defaultProvider)`,
+		`class="provider-badge"`,
+		`class="group-provider-select"`,
 		`config.claude_command || 'claude'`,
-		`cfg.provider = $('providerSelect').value || 'codex';`,
+		`cfg.provider = providerValue($('providerSelect').value);`,
 		`cfg.claude_command = $('claudeCommand').value.trim() || 'claude';`,
 		`min-height: 52px`,
 		`class="live-dot"`,
@@ -397,7 +402,7 @@ func TestConfigEndpointPreservesModelOrder(t *testing.T) {
 func TestConfigEndpointPersistsModelGroups(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	srv := newServer(configPath)
-	body := bytes.NewBufferString(`{"models":["model-b","model-a","model-c"],"model_groups":[{"name":"fast","models":["model-b","model-a"]},{"name":"slow","models":["model-c"]}],"model_loop_counts":{"model-b":2,"model-a":3,"model-c":4},"timeout_seconds":30,"codex_command":"codex","listen_addr":"127.0.0.1:0","max_output_chars":4000}`)
+	body := bytes.NewBufferString(`{"models":["model-b","model-a","model-c"],"model_groups":[{"name":"fast","provider":"codex","models":["model-b","model-a"]},{"name":"slow","provider":"claude","models":["model-c"]}],"model_loop_counts":{"model-b":2,"model-a":3,"model-c":4},"timeout_seconds":30,"codex_command":"codex","listen_addr":"127.0.0.1:0","max_output_chars":4000}`)
 
 	rec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/config", body))
@@ -409,8 +414,8 @@ func TestConfigEndpointPersistsModelGroups(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantGroups := []alive.ModelGroup{
-		{Name: "fast", Models: []string{"model-b", "model-a"}},
-		{Name: "slow", Models: []string{"model-c"}},
+		{Name: "fast", Provider: alive.ProviderCodex, Models: []string{"model-b", "model-a"}},
+		{Name: "slow", Provider: alive.ProviderClaude, Models: []string{"model-c"}},
 	}
 	if !reflect.DeepEqual(cfg.ModelGroups, wantGroups) {
 		t.Fatalf("model groups = %#v, want %#v", cfg.ModelGroups, wantGroups)
@@ -423,8 +428,8 @@ func TestConfigEndpointPersistsModelGroups(t *testing.T) {
 func TestProbeRunnerConfigDoesNotExpandBatchGroups(t *testing.T) {
 	cfg := alive.DefaultConfig()
 	cfg.ModelGroups = []alive.ModelGroup{
-		{Name: "fast", Models: []string{"model-a", "model-b"}},
-		{Name: "slow", Models: []string{"model-c"}},
+		{Name: "fast", Provider: alive.ProviderCodex, Models: []string{"model-a", "model-b"}},
+		{Name: "slow", Provider: alive.ProviderClaude, Models: []string{"model-c"}},
 	}
 	cfg.ModelLoopCounts = map[string]int{"model-a": 2, "model-b": 5, "model-c": 10}
 	cfg.ApplyDefaults()
@@ -436,17 +441,33 @@ func TestProbeRunnerConfigDoesNotExpandBatchGroups(t *testing.T) {
 	if _, ok := runnerCfg.ModelLoopCounts["model-a"]; ok {
 		t.Fatalf("runner loop counts kept unselected model: %#v", runnerCfg.ModelLoopCounts)
 	}
+	wantRunnerGroups := []alive.ModelGroup{
+		{Name: "fast", Provider: alive.ProviderCodex, Models: []string{"model-b"}},
+		{Name: "slow", Provider: alive.ProviderClaude, Models: []string{"model-c"}},
+	}
+	if !reflect.DeepEqual(runnerCfg.ModelGroups, wantRunnerGroups) {
+		t.Fatalf("runner groups = %#v, want %#v", runnerCfg.ModelGroups, wantRunnerGroups)
+	}
 
 	modelCfg := singleModelRunnerConfig(runnerCfg, "model-b")
 	modelCfg.ApplyDefaults()
 	if !reflect.DeepEqual(modelCfg.Models, []string{"model-b"}) {
 		t.Fatalf("single-model runner models = %#v, want model-b only", modelCfg.Models)
 	}
-	if !reflect.DeepEqual(modelCfg.ModelGroups, []alive.ModelGroup{{Name: "Default", Models: []string{"model-b"}}}) {
+	if modelCfg.Provider != alive.ProviderCodex {
+		t.Fatalf("single-model provider = %q, want codex", modelCfg.Provider)
+	}
+	if !reflect.DeepEqual(modelCfg.ModelGroups, []alive.ModelGroup{{Name: "Default", Provider: alive.ProviderCodex, Models: []string{"model-b"}}}) {
 		t.Fatalf("single-model runner groups = %#v", modelCfg.ModelGroups)
 	}
 	if !reflect.DeepEqual(modelCfg.ModelLoopCounts, map[string]int{"model-b": 5}) {
 		t.Fatalf("single-model loop counts = %#v", modelCfg.ModelLoopCounts)
+	}
+
+	claudeCfg := singleModelRunnerConfig(runnerCfg, "model-c")
+	claudeCfg.ApplyDefaults()
+	if claudeCfg.Provider != alive.ProviderClaude {
+		t.Fatalf("single-model provider = %q, want claude", claudeCfg.Provider)
 	}
 }
 

@@ -23,8 +23,9 @@ type Config struct {
 }
 
 type ModelGroup struct {
-	Name   string   `json:"name"`
-	Models []string `json:"models"`
+	Name     string   `json:"name"`
+	Provider string   `json:"provider,omitempty"`
+	Models   []string `json:"models"`
 }
 
 const (
@@ -86,17 +87,15 @@ func (c *Config) ApplyDefaults() {
 	if c.MaxOutputChars <= 0 {
 		c.MaxOutputChars = 4000
 	}
-	c.ModelGroups = normalizeModelGroups(c.ModelGroups, c.Models)
+	c.ModelGroups = normalizeModelGroups(c.ModelGroups, c.Models, c.Provider)
 	c.Models = flattenModelGroups(c.ModelGroups)
 	c.ModelLoopCounts = normalizeModelLoopCounts(c.Models, c.ModelLoopCounts, c.LoopCount)
 	c.LoopCount = 0
 }
 
 func (c Config) Validate() error {
-	switch c.Provider {
-	case ProviderCodex, ProviderClaude:
-	default:
-		return errors.New("unsupported provider: " + c.Provider)
+	if err := c.ValidateProviders(); err != nil {
+		return err
 	}
 	if len(c.Models) == 0 {
 		return errors.New("at least one model is required")
@@ -109,8 +108,37 @@ func (c Config) Validate() error {
 	return nil
 }
 
+func (c Config) ValidateProviders() error {
+	switch c.Provider {
+	case ProviderCodex, ProviderClaude:
+	default:
+		return errors.New("unsupported provider: " + c.Provider)
+	}
+	for _, group := range c.ModelGroups {
+		switch group.Provider {
+		case ProviderCodex, ProviderClaude:
+		default:
+			return errors.New("unsupported group provider: " + group.Provider)
+		}
+	}
+	return nil
+}
+
 func (c Config) Timeout() time.Duration {
 	return time.Duration(c.TimeoutSeconds) * time.Second
+}
+
+func (c Config) ProviderForModel(model string) string {
+	c.ApplyDefaults()
+	model = strings.TrimSpace(model)
+	for _, group := range c.ModelGroups {
+		for _, groupModel := range group.Models {
+			if groupModel == model {
+				return normalizeProvider(group.Provider)
+			}
+		}
+	}
+	return normalizeProvider(c.Provider)
 }
 
 func (c Config) LoopCountForModel(model string) int {
@@ -167,9 +195,14 @@ func RemoveModels(existing, removals []string) []string {
 }
 
 func AddModelsToGroup(groups []ModelGroup, additions []string, groupName string) []ModelGroup {
-	out := normalizeModelGroups(groups, nil)
+	return AddModelsToProviderGroup(groups, additions, groupName, ProviderCodex)
+}
+
+func AddModelsToProviderGroup(groups []ModelGroup, additions []string, groupName, provider string) []ModelGroup {
+	provider = normalizeProvider(provider)
+	out := normalizeModelGroups(groups, nil, provider)
 	if len(out) == 0 {
-		out = []ModelGroup{{Name: defaultModelGroupName()}}
+		out = []ModelGroup{{Name: defaultModelGroupName(), Provider: provider}}
 	}
 	groupName = strings.TrimSpace(groupName)
 	if groupName == "" {
@@ -186,7 +219,7 @@ func AddModelsToGroup(groups []ModelGroup, additions []string, groupName string)
 		}
 	}
 	if target < 0 {
-		out = append(out, ModelGroup{Name: groupName})
+		out = append(out, ModelGroup{Name: groupName, Provider: provider})
 		target = len(out) - 1
 	}
 	for _, model := range additions {
@@ -200,7 +233,7 @@ func AddModelsToGroup(groups []ModelGroup, additions []string, groupName string)
 		out[target].Models = append(out[target].Models, model)
 		seen[model] = struct{}{}
 	}
-	return normalizeModelGroups(out, nil)
+	return normalizeModelGroups(out, nil, provider)
 }
 
 func RemoveModelsFromGroups(groups []ModelGroup, removals []string) []ModelGroup {
@@ -212,10 +245,10 @@ func RemoveModelsFromGroups(groups []ModelGroup, removals []string) []ModelGroup
 		}
 	}
 	if len(remove) == 0 {
-		return normalizeModelGroups(groups, nil)
+		return normalizeModelGroups(groups, nil, ProviderCodex)
 	}
 	out := make([]ModelGroup, 0, len(groups))
-	for _, group := range normalizeModelGroups(groups, nil) {
+	for _, group := range normalizeModelGroups(groups, nil, ProviderCodex) {
 		kept := group.Models[:0]
 		for _, model := range group.Models {
 			if _, ok := remove[model]; !ok {
@@ -231,7 +264,11 @@ func RemoveModelsFromGroups(groups []ModelGroup, removals []string) []ModelGroup
 }
 
 func NormalizeModelGroups(groups []ModelGroup, fallbackModels []string) []ModelGroup {
-	return normalizeModelGroups(groups, fallbackModels)
+	return normalizeModelGroups(groups, fallbackModels, ProviderCodex)
+}
+
+func NormalizeModelGroupsWithProvider(groups []ModelGroup, fallbackModels []string, provider string) []ModelGroup {
+	return normalizeModelGroups(groups, fallbackModels, provider)
 }
 
 func FlattenModelGroups(groups []ModelGroup) []string {
@@ -255,13 +292,18 @@ func normalizeModels(models []string) []string {
 	return out
 }
 
-func normalizeModelGroups(groups []ModelGroup, fallbackModels []string) []ModelGroup {
+func normalizeModelGroups(groups []ModelGroup, fallbackModels []string, defaultProvider string) []ModelGroup {
+	defaultProvider = normalizeProvider(defaultProvider)
 	seen := make(map[string]struct{})
 	out := make([]ModelGroup, 0, len(groups))
 	for _, group := range groups {
 		name := strings.TrimSpace(group.Name)
 		if name == "" {
 			name = defaultModelGroupName()
+		}
+		provider := normalizeProvider(group.Provider)
+		if group.Provider == "" {
+			provider = defaultProvider
 		}
 		models := make([]string, 0, len(group.Models))
 		for _, model := range group.Models {
@@ -278,12 +320,12 @@ func normalizeModelGroups(groups []ModelGroup, fallbackModels []string) []ModelG
 		if len(models) == 0 {
 			continue
 		}
-		out = append(out, ModelGroup{Name: name, Models: models})
+		out = append(out, ModelGroup{Name: name, Provider: provider, Models: models})
 	}
 	if len(out) == 0 {
 		models := normalizeModels(fallbackModels)
 		if len(models) > 0 {
-			out = append(out, ModelGroup{Name: defaultModelGroupName(), Models: models})
+			out = append(out, ModelGroup{Name: defaultModelGroupName(), Provider: defaultProvider, Models: models})
 		}
 	}
 	return out
