@@ -46,8 +46,9 @@ type configRequest struct {
 }
 
 type modelsRequest struct {
-	Models []string `json:"models"`
-	Group  string   `json:"group"`
+	Models   []string `json:"models"`
+	Group    string   `json:"group"`
+	Provider string   `json:"provider"`
 }
 
 type probeRequest struct {
@@ -195,18 +196,18 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	cfg.ModelGroups = alive.NormalizeModelGroups(req.ModelGroups, req.Models)
-	cfg.Models = alive.FlattenModelGroups(cfg.ModelGroups)
-	cfg.ModelLoopCounts = req.ModelLoopCounts
 	cfg.Provider = strings.TrimSpace(req.Provider)
+	cfg.ModelGroups = req.ModelGroups
+	cfg.Models = req.Models
+	cfg.ModelLoopCounts = req.ModelLoopCounts
 	cfg.TimeoutSeconds = req.TimeoutSeconds
 	cfg.CodexCommand = strings.TrimSpace(req.CodexCommand)
 	cfg.ClaudeCommand = strings.TrimSpace(req.ClaudeCommand)
 	cfg.MaxOutputChars = req.MaxOutputChars
 	cfg.ListenAddr = strings.TrimSpace(req.ListenAddr)
 	cfg.ApplyDefaults()
-	if cfg.Provider != alive.ProviderCodex && cfg.Provider != alive.ProviderClaude {
-		writeError(w, http.StatusBadRequest, "unsupported provider: "+cfg.Provider)
+	if err := cfg.ValidateProviders(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := alive.SaveConfig(s.configPath, cfg); err != nil {
@@ -229,7 +230,11 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		cfg.ModelGroups = alive.AddModelsToGroup(cfg.ModelGroups, req.Models, req.Group)
+		provider := strings.TrimSpace(req.Provider)
+		if provider == "" {
+			provider = cfg.Provider
+		}
+		cfg.ModelGroups = alive.AddModelsToProviderGroup(cfg.ModelGroups, req.Models, req.Group, provider)
 		cfg.Models = alive.FlattenModelGroups(cfg.ModelGroups)
 		if err := alive.SaveConfig(s.configPath, cfg); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -310,19 +315,59 @@ func (s *server) handleProbe(w http.ResponseWriter, r *http.Request) {
 }
 
 func probeRunnerConfig(cfg alive.Config, models []string) alive.Config {
+	cfg.ApplyDefaults()
 	runnerCfg := cfg
 	runnerCfg.Models = append([]string(nil), models...)
-	runnerCfg.ModelGroups = nil
+	runnerCfg.ModelGroups = modelGroupsForModels(cfg.ModelGroups, models, cfg.Provider)
 	runnerCfg.ApplyDefaults()
 	return runnerCfg
 }
 
 func singleModelRunnerConfig(cfg alive.Config, model string) alive.Config {
 	modelCfg := cfg
+	modelCfg.Provider = cfg.ProviderForModel(model)
 	modelCfg.Models = []string{model}
 	modelCfg.ModelGroups = nil
 	modelCfg.ApplyDefaults()
 	return modelCfg
+}
+
+func modelGroupsForModels(groups []alive.ModelGroup, models []string, defaultProvider string) []alive.ModelGroup {
+	wanted := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model != "" {
+			wanted[model] = struct{}{}
+		}
+	}
+	selected := make([]alive.ModelGroup, 0, len(groups))
+	matched := make(map[string]struct{}, len(wanted))
+	for _, group := range groups {
+		kept := make([]string, 0, len(group.Models))
+		for _, model := range group.Models {
+			if _, ok := wanted[model]; ok {
+				kept = append(kept, model)
+				matched[model] = struct{}{}
+			}
+		}
+		if len(kept) > 0 {
+			selected = append(selected, alive.ModelGroup{Name: group.Name, Provider: group.Provider, Models: kept})
+		}
+	}
+	unmatched := make([]string, 0)
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		if _, ok := matched[model]; !ok {
+			unmatched = append(unmatched, model)
+		}
+	}
+	if len(unmatched) > 0 {
+		selected = append(selected, alive.ModelGroup{Name: "Default", Provider: defaultProvider, Models: unmatched})
+	}
+	return selected
 }
 
 func (s *server) handleStopProbe(w http.ResponseWriter, r *http.Request) {

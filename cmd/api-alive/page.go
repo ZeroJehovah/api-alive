@@ -282,6 +282,17 @@ const indexHTML = `<!doctype html>
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .provider-badge {
+      flex: 0 0 auto;
+      padding: 2px 7px;
+      border: 1px solid rgba(15, 118, 110, .22);
+      border-radius: 999px;
+      background: rgba(15, 118, 110, .08);
+      color: var(--accent-dark);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
     .group-count { color: var(--muted); font-weight: 500; }
     .group-select {
       display: inline-flex;
@@ -293,6 +304,7 @@ const indexHTML = `<!doctype html>
     }
     .group-select input { width: 16px; height: 16px; min-height: 16px; padding: 0; }
     .group-name-input { max-width: 260px; min-height: 28px; padding: 0 8px; font-size: 12px; font-weight: 600; }
+    .group-provider-select { width: 96px; min-height: 28px; padding: 0 8px; font-size: 12px; }
     .drag-handle {
       width: 26px;
       height: 24px;
@@ -466,7 +478,7 @@ const indexHTML = `<!doctype html>
           </div>
         </header>
         <div class="body settings">
-          <label>Provider
+          <label>Default provider
             <select id="providerSelect">
               <option value="codex">Codex</option>
               <option value="claude">Claude</option>
@@ -575,14 +587,22 @@ const indexHTML = `<!doctype html>
     function visibleModels() { return state.editing ? state.draftModels : flattenGroups(visibleGroups()); }
     function visibleGroups() { return state.editing ? state.draftGroups : configGroups(state.config); }
     function defaultGroupName() { return 'Default'; }
+    function providerValue(value) {
+      return String(value || 'codex').toLowerCase() === 'claude' ? 'claude' : 'codex';
+    }
+    function providerLabel(value) {
+      return providerValue(value) === 'claude' ? 'Claude' : 'Codex';
+    }
     function configGroups(config) {
+      const defaultProvider = providerValue(config?.provider);
       const groups = (config?.model_groups || []).map(group => ({
         name: String(group.name || defaultGroupName()).trim() || defaultGroupName(),
+        provider: providerValue(group.provider || defaultProvider),
         models: [...(group.models || [])],
       })).filter(group => group.models.length > 0);
       if (groups.length) return groups;
       const models = [...(config?.models || [])];
-      return models.length ? [{ name: defaultGroupName(), models }] : [];
+      return models.length ? [{ name: defaultGroupName(), provider: defaultProvider, models }] : [];
     }
     function flattenGroups(groups) {
       const seen = new Set();
@@ -595,7 +615,7 @@ const indexHTML = `<!doctype html>
       }));
       return models;
     }
-    function groupKey(index, group) { return String(index) + ':' + (group?.name || defaultGroupName()); }
+    function groupKey(index, group) { return String(index) + ':' + providerValue(group?.provider) + ':' + (group?.name || defaultGroupName()); }
     function newDraftGroupID() { return 'group-' + state.nextDraftGroupID++; }
     function ensureDraftGroupIDs() {
       state.draftGroups.forEach(group => {
@@ -1067,7 +1087,7 @@ const indexHTML = `<!doctype html>
       if (!select) return;
       const current = select.value;
       ensureDraftGroupIDs();
-      select.innerHTML = state.draftGroups.map(group => '<option value="' + escapeText(group._id) + '">' + escapeText(group.name || defaultGroupName()) + '</option>').join('');
+      select.innerHTML = state.draftGroups.map(group => '<option value="' + escapeText(group._id) + '">' + escapeText((group.name || defaultGroupName()) + ' · ' + providerLabel(group.provider)) + '</option>').join('');
       if (state.draftGroups.some(group => group._id === current)) select.value = current;
       else if (state.draftGroups.length) select.value = state.draftGroups[state.draftGroups.length - 1]._id;
     }
@@ -1153,6 +1173,7 @@ const indexHTML = `<!doctype html>
         '<span class="group-drag-handle" draggable="true" data-group-drag-handle title="Drag group">≡</span>' +
         '<button type="button" class="group-toggle" data-toggle-group="0">▾</button>' +
         '<input class="group-name-input" data-group-name="0" maxlength="32">' +
+        '<select class="group-provider-select" data-group-provider="0"><option value="codex">Codex</option><option value="claude">Claude</option></select>' +
         '<span class="group-count"></span>' +
         '</div><div class="model-group-body"><div class="model-group-body-inner"><table class="model-table model-editor"><thead><tr>' +
         '<th class="drag"></th><th class="model-heading">Model</th><th class="attempt-limit">Retries</th><th class="editor-actions">Actions</th>' +
@@ -1165,6 +1186,15 @@ const indexHTML = `<!doctype html>
         if (!group) return;
         group.name = nameInput.value.trim() || defaultGroupName();
         updateAddGroupSelect();
+      });
+      const providerSelect = section.querySelector('[data-group-provider]');
+      providerSelect.addEventListener('change', () => {
+        const groupIndex = Number(providerSelect.dataset.groupProvider || 0);
+        const group = state.draftGroups[groupIndex];
+        if (!group) return;
+        group.provider = providerValue(providerSelect.value);
+        updateAddGroupSelect();
+        renderModels();
       });
       const tbody = section.querySelector('[data-drop-group]');
       installDropTarget(tbody);
@@ -1185,6 +1215,9 @@ const indexHTML = `<!doctype html>
       const input = section.querySelector('[data-group-name]');
       input.dataset.groupName = String(groupIndex);
       if (document.activeElement !== input && input.value !== (group.name || defaultGroupName())) input.value = group.name || defaultGroupName();
+      const providerSelect = section.querySelector('[data-group-provider]');
+      providerSelect.dataset.groupProvider = String(groupIndex);
+      if (document.activeElement !== providerSelect && providerSelect.value !== providerValue(group.provider)) providerSelect.value = providerValue(group.provider);
       section.querySelector('.group-count').textContent = group.models.length + ' model(s)';
       const body = section.querySelector('.model-group-body');
       setGroupBodyCollapsed(body, collapsed);
@@ -1394,7 +1427,7 @@ const indexHTML = `<!doctype html>
       section.dataset.viewGroup = String(groupIndex);
       section.innerHTML = '<div class="model-group-header">' +
         '<button type="button" class="group-toggle" data-toggle-group="' + groupIndex + '">▾</button>' +
-        '<div class="group-title"><span></span><span class="group-count"></span></div>' +
+        '<div class="group-title"><span></span><span class="provider-badge"></span><span class="group-count"></span></div>' +
         '<label class="group-select"><input data-select-group="' + groupIndex + '" type="checkbox">Select group</label>' +
         '</div><div class="model-group-body"><div class="model-group-body-inner"><table class="model-table"><thead><tr>' +
         '<th class="check"></th><th class="model-heading">Model</th><th class="result">Result</th><th class="progress">Progress</th>' +
@@ -1414,6 +1447,7 @@ const indexHTML = `<!doctype html>
       toggle.dataset.toggleGroup = String(groupIndex);
       toggle.textContent = collapsed ? '▸' : '▾';
       section.querySelector('.group-title span:first-child').textContent = group.name || defaultGroupName();
+      section.querySelector('.provider-badge').textContent = providerLabel(group.provider);
       section.querySelector('.group-count').textContent = group.models.length + ' model(s)';
       const select = section.querySelector('[data-select-group]');
       select.dataset.selectGroup = String(groupIndex);
@@ -1529,8 +1563,8 @@ const indexHTML = `<!doctype html>
       updateFavicon();
     }
     function fillForm(config) {
-      const provider = String(config.provider || 'codex').toLowerCase();
-      $('providerSelect').value = provider === 'claude' ? 'claude' : 'codex';
+      const provider = providerValue(config.provider);
+      $('providerSelect').value = provider;
       $('codexCommand').value = config.codex_command || 'codex';
       $('claudeCommand').value = config.claude_command || 'claude';
       $('listenAddr').value = config.listen_addr || '0.0.0.0:8080';
@@ -1786,7 +1820,7 @@ const indexHTML = `<!doctype html>
       const cfg = { ...state.config };
       cfg.model_groups = configGroups(cfg);
       cfg.models = flattenGroups(cfg.model_groups);
-      cfg.provider = $('providerSelect').value || 'codex';
+      cfg.provider = providerValue($('providerSelect').value);
       cfg.codex_command = $('codexCommand').value.trim() || 'codex';
       cfg.claude_command = $('claudeCommand').value.trim() || 'claude';
       cfg.listen_addr = $('listenAddr').value.trim() || '0.0.0.0:8080';
@@ -1804,7 +1838,7 @@ const indexHTML = `<!doctype html>
       name = name.trim();
       if (!name || !state.editing) return;
       if (!state.draftModels.includes(name)) {
-        if (!state.draftGroups.length) state.draftGroups.push({ _id: newDraftGroupID(), name: defaultGroupName(), models: [] });
+        if (!state.draftGroups.length) state.draftGroups.push({ _id: newDraftGroupID(), name: defaultGroupName(), provider: providerValue($('providerSelect').value), models: [] });
         const selectedGroupID = $('newModelGroup').value;
         let groupIndex = state.draftGroups.findIndex(group => group._id === selectedGroupID);
         if (groupIndex < 0) groupIndex = Math.max(0, state.draftGroups.length - 1);
@@ -1826,7 +1860,7 @@ const indexHTML = `<!doctype html>
         index++;
         name = base + ' ' + index;
       }
-      state.draftGroups.push({ _id: newDraftGroupID(), name, models: [] });
+      state.draftGroups.push({ _id: newDraftGroupID(), name, provider: providerValue($('providerSelect').value), models: [] });
       updateAddGroupSelect();
       $('newModelGroup').value = state.draftGroups[state.draftGroups.length - 1]._id;
       renderModels();
@@ -1849,8 +1883,8 @@ const indexHTML = `<!doctype html>
       if (!state.editing) {
         state.editing = true;
         state.nextDraftGroupID = 1;
-        state.draftGroups = configGroups(state.config).map(group => ({ _id: newDraftGroupID(), name: group.name, models: [...group.models] }));
-        if (!state.draftGroups.length) state.draftGroups = [{ _id: newDraftGroupID(), name: defaultGroupName(), models: [] }];
+        state.draftGroups = configGroups(state.config).map(group => ({ _id: newDraftGroupID(), name: group.name, provider: providerValue(group.provider), models: [...group.models] }));
+        if (!state.draftGroups.length) state.draftGroups = [{ _id: newDraftGroupID(), name: defaultGroupName(), provider: providerValue(state.config.provider), models: [] }];
         state.draftModels = flattenGroups(state.draftGroups);
         state.draftModelLoopCounts = loopCountsForModels(state.draftModels, state.config.model_loop_counts || {});
         state.editLockedModels = new Set(state.runningModels);
@@ -1860,7 +1894,7 @@ const indexHTML = `<!doctype html>
         return;
       }
       const groups = state.draftGroups
-        .map(group => ({ name: (group.name || defaultGroupName()).trim() || defaultGroupName(), models: [...group.models] }))
+        .map(group => ({ name: (group.name || defaultGroupName()).trim() || defaultGroupName(), provider: providerValue(group.provider), models: [...group.models] }))
         .filter(group => group.models.length > 0);
       const models = flattenGroups(groups);
       state.config = await request('/api/config', { method: 'POST', body: JSON.stringify({ ...state.config, model_groups: groups, models, model_loop_counts: loopCountsForModels(models, state.draftModelLoopCounts) }) });

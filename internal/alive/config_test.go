@@ -66,7 +66,7 @@ func TestConfigMigratesFlatModelsToDefaultGroup(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Models = []string{"a", "b", "a"}
 	cfg.ApplyDefaults()
-	wantGroups := []ModelGroup{{Name: "Default", Models: []string{"a", "b"}}}
+	wantGroups := []ModelGroup{{Name: "Default", Provider: ProviderCodex, Models: []string{"a", "b"}}}
 	if !reflect.DeepEqual(cfg.ModelGroups, wantGroups) {
 		t.Fatalf("model groups = %#v, want %#v", cfg.ModelGroups, wantGroups)
 	}
@@ -78,19 +78,33 @@ func TestConfigMigratesFlatModelsToDefaultGroup(t *testing.T) {
 func TestConfigPreservesModelGroupsAndFlattensModels(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.ModelGroups = []ModelGroup{
-		{Name: "fast", Models: []string{"a", "b"}},
-		{Name: "slow", Models: []string{"b", "c", ""}},
+		{Name: "fast", Provider: ProviderCodex, Models: []string{"a", "b"}},
+		{Name: "slow", Provider: ProviderClaude, Models: []string{"b", "c", ""}},
 	}
 	cfg.ApplyDefaults()
 	wantGroups := []ModelGroup{
-		{Name: "fast", Models: []string{"a", "b"}},
-		{Name: "slow", Models: []string{"c"}},
+		{Name: "fast", Provider: ProviderCodex, Models: []string{"a", "b"}},
+		{Name: "slow", Provider: ProviderClaude, Models: []string{"c"}},
 	}
 	if !reflect.DeepEqual(cfg.ModelGroups, wantGroups) {
 		t.Fatalf("model groups = %#v, want %#v", cfg.ModelGroups, wantGroups)
 	}
 	if !reflect.DeepEqual(cfg.Models, []string{"a", "b", "c"}) {
 		t.Fatalf("models = %#v, want flattened groups", cfg.Models)
+	}
+}
+
+func TestConfigUsesGlobalProviderForLegacyGroups(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Provider = ProviderClaude
+	cfg.Models = []string{"sonnet"}
+	cfg.ApplyDefaults()
+	wantGroups := []ModelGroup{{Name: "Default", Provider: ProviderClaude, Models: []string{"sonnet"}}}
+	if !reflect.DeepEqual(cfg.ModelGroups, wantGroups) {
+		t.Fatalf("model groups = %#v, want %#v", cfg.ModelGroups, wantGroups)
+	}
+	if got := cfg.ProviderForModel("sonnet"); got != ProviderClaude {
+		t.Fatalf("ProviderForModel = %q, want %q", got, ProviderClaude)
 	}
 }
 
