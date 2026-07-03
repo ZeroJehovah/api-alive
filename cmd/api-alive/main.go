@@ -105,6 +105,7 @@ type modelRun struct {
 }
 
 const maxServerLogEntries = 100
+const runLivenessCheckInterval = 500 * time.Millisecond
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -390,19 +391,50 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) runProbeTask(ctx context.Context, taskID, runID int64, runner alive.Runner) {
-	events, err := runner.RunEvents(ctx)
 	model := ""
 	if len(runner.Config.Models) > 0 {
 		model = runner.Config.Models[0]
 	}
+	ctx, cancel := s.currentRunContext(ctx, taskID, runID, model)
+	defer cancel()
+	events, err := runner.RunEvents(ctx)
 	if err != nil {
 		s.tasks.failRun(taskID, runID, model, err.Error())
 		return
 	}
 	for event := range events {
-		s.tasks.applyEvent(taskID, runID, event)
+		if !s.tasks.applyEvent(taskID, runID, event) {
+			cancel()
+		}
 	}
 	s.tasks.finishRun(taskID, runID, model)
+}
+
+func (s *server) currentRunContext(parent context.Context, taskID, runID int64, model string) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
+	if model == "" {
+		return ctx, cancel
+	}
+	if !s.tasks.runIsCurrent(taskID, runID, model) {
+		cancel()
+		return ctx, cancel
+	}
+	go func() {
+		ticker := time.NewTicker(runLivenessCheckInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if !s.tasks.runIsCurrent(taskID, runID, model) {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return ctx, cancel
 }
 
 func (s *server) streamProbe(w http.ResponseWriter, r *http.Request, runner alive.Runner) {
@@ -433,7 +465,7 @@ func (ts *taskStore) start(models []string, loopCounts map[string]int) (probeTas
 		ts.runs = make(map[string]activeModelRun)
 	}
 
-	if !ts.task.Running {
+	if len(ts.runs) == 0 {
 		logs := append([]probeLogEntry(nil), ts.task.Logs...)
 		results := append([]alive.Result(nil), ts.task.Results...)
 		for _, res := range initialRunningResults(models) {
@@ -453,6 +485,9 @@ func (ts *taskStore) start(models []string, loopCounts map[string]int) (probeTas
 		}
 		ts.runs = make(map[string]activeModelRun)
 	} else {
+		ts.task.Running = true
+		ts.task.FinishedAt = ""
+		ts.task.Models = alive.AddModels(ts.task.Models, activeRunModels(ts.runs))
 		ts.task.Models = alive.AddModels(ts.task.Models, models)
 		for _, res := range initialRunningResults(models) {
 			ts.task.Results = upsertResult(ts.task.Results, res)
@@ -479,6 +514,7 @@ func (ts *taskStore) start(models []string, loopCounts map[string]int) (probeTas
 		runs = append(runs, modelRun{ID: run.ID, Model: model, Ctx: ctx})
 	}
 	ts.task.RunningModels = runningModelsInOrder(ts.task.Models, ts.runs)
+	ts.task.Running = len(ts.runs) > 0
 	ts.publishLocked()
 	return cloneTask(ts.task), runs, nil
 }
@@ -486,7 +522,9 @@ func (ts *taskStore) start(models []string, loopCounts map[string]int) (probeTas
 func (ts *taskStore) stopModels(models []string) (probeTask, error) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	if !ts.task.Running {
+	if len(ts.runs) == 0 {
+		ts.task.Running = false
+		ts.task.RunningModels = nil
 		return cloneTask(ts.task), errors.New("no probe task is running")
 	}
 	stopped := 0
@@ -528,12 +566,14 @@ func (ts *taskStore) clearResults() probeTask {
 func (ts *taskStore) snapshot() probeTask {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
+	ts.reconcileRunningLocked()
 	return cloneTask(ts.task)
 }
 
 func (ts *taskStore) subscribe() (<-chan probeTask, func()) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
+	ts.reconcileRunningLocked()
 	if ts.subscribers == nil {
 		ts.subscribers = make(map[chan probeTask]struct{})
 	}
@@ -574,22 +614,27 @@ func (ts *taskStore) publishLocked() {
 	}
 }
 
-func (ts *taskStore) applyEvent(taskID, runID int64, event alive.Event) {
+func (ts *taskStore) applyEvent(taskID, runID int64, event alive.Event) bool {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	if ts.task.ID != taskID {
-		return
-	}
 	res := event.Result
 	if !ts.isCurrentRunLocked(runID, res.Model) {
-		return
+		return false
+	}
+	if ts.task.ID != taskID {
+		if event.Type == alive.EventResult {
+			if ts.completeRunLocked(runID, res.Model, time.Now().Format(time.RFC3339)) {
+				ts.publishLocked()
+			}
+		}
+		return false
 	}
 	now := time.Now().Format(time.RFC3339)
 	if event.Type == alive.EventAttempt {
 		ts.task.Results = upsertResult(ts.task.Results, timestampResult(displayAttemptResult(res, ts.loopCountForModel(res.Model)), now))
 		ts.prependLogLocked(now, res)
 		ts.publishLocked()
-		return
+		return true
 	}
 	if event.Type == alive.EventResult {
 		ts.task.Results = upsertResult(ts.task.Results, timestampResult(res, now))
@@ -599,12 +644,19 @@ func (ts *taskStore) applyEvent(taskID, runID int64, event alive.Event) {
 		ts.completeRunLocked(runID, res.Model, now)
 		ts.publishLocked()
 	}
+	return true
 }
 
 func (ts *taskStore) finishRun(taskID, runID int64, model string) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
+	if !ts.isCurrentRunLocked(runID, model) {
+		return
+	}
 	if ts.task.ID != taskID {
+		if ts.completeRunLocked(runID, model, time.Now().Format(time.RFC3339)) {
+			ts.publishLocked()
+		}
 		return
 	}
 	if ts.completeRunLocked(runID, model, time.Now().Format(time.RFC3339)) {
@@ -615,7 +667,13 @@ func (ts *taskStore) finishRun(taskID, runID int64, model string) {
 func (ts *taskStore) failRun(taskID, runID int64, model, message string) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	if ts.task.ID != taskID || !ts.isCurrentRunLocked(runID, model) {
+	if !ts.isCurrentRunLocked(runID, model) {
+		return
+	}
+	if ts.task.ID != taskID {
+		if ts.completeRunLocked(runID, model, time.Now().Format(time.RFC3339)) {
+			ts.publishLocked()
+		}
 		return
 	}
 	delete(ts.runs, model)
@@ -635,6 +693,26 @@ func (ts *taskStore) failRun(taskID, runID int64, model, message string) {
 func (ts *taskStore) isCurrentRunLocked(runID int64, model string) bool {
 	run, ok := ts.runs[model]
 	return ok && run.ID == runID
+}
+
+func (ts *taskStore) runIsCurrent(taskID, runID int64, model string) bool {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	return ts.task.ID == taskID && ts.isCurrentRunLocked(runID, model)
+}
+
+func (ts *taskStore) reconcileRunningLocked() {
+	if len(ts.runs) == 0 {
+		if ts.task.Running {
+			ts.task.Running = false
+			ts.task.RunningModels = nil
+		}
+		return
+	}
+	ts.task.Running = true
+	ts.task.FinishedAt = ""
+	ts.task.Models = alive.AddModels(ts.task.Models, activeRunModels(ts.runs))
+	ts.task.RunningModels = runningModelsInOrder(ts.task.Models, ts.runs)
 }
 
 func (ts *taskStore) completeRunLocked(runID int64, model, finishedAt string) bool {
@@ -720,6 +798,14 @@ func runningModelsInOrder(models []string, runs map[string]activeModelRun) []str
 		}
 	}
 	return running
+}
+
+func activeRunModels(runs map[string]activeModelRun) []string {
+	models := make([]string, 0, len(runs))
+	for model := range runs {
+		models = append(models, model)
+	}
+	return models
 }
 
 func displayAttemptResult(res alive.Result, loopCount int) alive.Result {
