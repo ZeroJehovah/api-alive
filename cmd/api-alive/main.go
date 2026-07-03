@@ -531,14 +531,26 @@ func (ts *taskStore) start(models []string, loopCounts map[string]int) (probeTas
 	if len(ts.runs) == 0 {
 		ts.nextID++
 		now := time.Now().Format(time.RFC3339)
+		results := append([]alive.Result(nil), ts.task.Results...)
+		for _, res := range initialRunningResults(models) {
+			results = upsertResult(results, res)
+		}
+		mergedLoopCounts := make(map[string]int, len(ts.task.LoopCounts)+len(models))
+		for model, loopCount := range ts.task.LoopCounts {
+			mergedLoopCounts[model] = loopCount
+		}
+		for _, model := range models {
+			mergedLoopCounts[model] = loopCounts[model]
+		}
 		ts.task = probeTask{
 			ID:            ts.nextID,
 			Running:       true,
-			Models:        append([]string(nil), models...),
+			Models:        alive.AddModels(ts.task.Models, models),
 			RunningModels: append([]string(nil), models...),
 			StartedAt:     now,
-			Results:       initialRunningResults(models),
-			LoopCounts:    loopCountsForModels(models, loopCounts),
+			Results:       results,
+			Logs:          append([]probeLogEntry(nil), ts.task.Logs...),
+			LoopCounts:    mergedLoopCounts,
 		}
 		ts.runs = make(map[string]activeModelRun)
 	} else {

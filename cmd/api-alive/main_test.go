@@ -762,7 +762,7 @@ func TestProbeTaskClearResultsKeepsRunningModels(t *testing.T) {
 	}
 }
 
-func TestProbeTaskStartClearsPreviousLogsAndUnselectedResults(t *testing.T) {
+func TestProbeTaskStartPreservesPreviousLogsAndUnselectedResults(t *testing.T) {
 	store := &taskStore{}
 	first, firstRuns, err := store.start([]string{"model-a"}, map[string]int{"model-a": 1})
 	if err != nil {
@@ -777,20 +777,23 @@ func TestProbeTaskStartClearsPreviousLogsAndUnselectedResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	snap := store.snapshot()
-	if len(snap.Logs) != 0 {
+	if len(snap.Logs) != 1 || snap.Logs[0].Result.Model != "model-a" {
 		t.Fatalf("logs after second start = %#v", snap.Logs)
 	}
-	if modelAResult := resultByModel(snap.Results, "model-a"); modelAResult.Model != "" {
-		t.Fatalf("unselected model result was preserved: %#v", snap.Results)
+	if modelAResult := resultByModel(snap.Results, "model-a"); modelAResult.Model != "model-a" || !modelAResult.Success {
+		t.Fatalf("unselected model result was not preserved: %#v", snap.Results)
 	}
 	modelBResult := resultByModel(snap.Results, "model-b")
 	if modelBResult.Model != "model-b" || modelBResult.Attempts != 1 || modelBResult.Success {
 		t.Fatalf("selected model did not get initial running result: %#v", snap.Results)
 	}
+	if snap.LoopCounts["model-a"] != 1 || snap.LoopCounts["model-b"] != 1 {
+		t.Fatalf("loop counts after second start = %#v", snap.LoopCounts)
+	}
 
 	store.applyEvent(second.ID, runIDByModel(t, secondRuns, "model-b"), alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-b", Attempts: 1, Success: false, DurationMS: 20}})
 	snap = store.snapshot()
-	if len(snap.Logs) != 1 || snap.Logs[0].Result.Model != "model-b" {
+	if len(snap.Logs) != 2 || snap.Logs[0].Result.Model != "model-b" || snap.Logs[1].Result.Model != "model-a" {
 		t.Fatalf("logs after second event = %#v", snap.Logs)
 	}
 }
