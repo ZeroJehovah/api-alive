@@ -9,7 +9,7 @@ import (
 )
 
 type Config struct {
-	Provider        string         `json:"provider"`
+	Provider        string         `json:"-"`
 	Models          []string       `json:"models"`
 	ModelGroups     []ModelGroup   `json:"model_groups,omitempty"`
 	ModelLoopCounts map[string]int `json:"model_loop_counts,omitempty"`

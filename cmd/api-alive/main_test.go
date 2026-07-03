@@ -163,19 +163,17 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`grid-template-columns: 320px minmax(0, 1fr);`,
 		`.grid > .panel { min-width: 0; }`,
 		`.models-actions { flex: 1 1 auto; min-width: 0; }`,
-		`.settings input, .settings select, .settings button`,
-		`Default provider`,
-		`id="providerSelect"`,
+		`.settings input, .settings button`,
 		`<option value="codex">Codex</option>`,
 		`<option value="claude">Claude</option>`,
 		`id="claudeCommand"`,
 		`function providerValue`,
 		`function providerLabel`,
-		`provider: providerValue(group.provider || defaultProvider)`,
+		`provider: providerValue(group.provider)`,
 		`class="provider-badge"`,
 		`class="group-provider-select"`,
 		`config.claude_command || 'claude'`,
-		`cfg.provider = providerValue($('providerSelect').value);`,
+		`delete cfg.provider;`,
 		`cfg.claude_command = $('claudeCommand').value.trim() || 'claude';`,
 		`min-height: 52px`,
 		`class="live-dot"`,
@@ -335,11 +333,11 @@ func TestStateCreatesDefaultConfig(t *testing.T) {
 	if state.Config.CodexCommand != "codex" {
 		t.Fatalf("codex command = %q", state.Config.CodexCommand)
 	}
-	if state.Config.Provider != alive.ProviderCodex {
-		t.Fatalf("provider = %q", state.Config.Provider)
-	}
 	if state.Config.ClaudeCommand != "claude" {
 		t.Fatalf("claude command = %q", state.Config.ClaudeCommand)
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte(`"provider"`)) {
+		t.Fatalf("state JSON should not expose top-level provider: %s", rec.Body.String())
 	}
 	if state.Config.ListenAddr != "0.0.0.0:8080" {
 		t.Fatalf("listen addr = %q", state.Config.ListenAddr)
@@ -370,7 +368,7 @@ func TestModelsEndpointAddsAndDeletesModels(t *testing.T) {
 func TestConfigEndpointUpdatesRuntime(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	srv := newServer(configPath)
-	body := bytes.NewBufferString(`{"provider":"claude","models":["sonnet"],"model_loop_counts":{"sonnet":2},"timeout_seconds":30,"codex_command":"codex-beta","claude_command":"claude-beta","listen_addr":"127.0.0.1:0","max_output_chars":1234}`)
+	body := bytes.NewBufferString(`{"models":["sonnet"],"model_groups":[{"name":"Claude","provider":"claude","models":["sonnet"]}],"model_loop_counts":{"sonnet":2},"timeout_seconds":30,"codex_command":"codex-beta","claude_command":"claude-beta","listen_addr":"127.0.0.1:0","max_output_chars":1234}`)
 
 	rec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/config", body))
@@ -381,8 +379,11 @@ func TestConfigEndpointUpdatesRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Provider != alive.ProviderClaude || cfg.TimeoutSeconds != 30 || cfg.ModelLoopCounts["sonnet"] != 2 || cfg.CodexCommand != "codex-beta" || cfg.ClaudeCommand != "claude-beta" || cfg.ListenAddr != "127.0.0.1:0" || cfg.MaxOutputChars != 1234 {
+	if cfg.TimeoutSeconds != 30 || cfg.ModelLoopCounts["sonnet"] != 2 || cfg.CodexCommand != "codex-beta" || cfg.ClaudeCommand != "claude-beta" || cfg.ListenAddr != "127.0.0.1:0" || cfg.MaxOutputChars != 1234 {
 		t.Fatalf("unexpected config: %#v", cfg)
+	}
+	if got := cfg.ProviderForModel("sonnet"); got != alive.ProviderClaude {
+		t.Fatalf("provider for sonnet = %q, want claude", got)
 	}
 }
 

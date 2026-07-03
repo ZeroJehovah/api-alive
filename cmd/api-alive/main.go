@@ -34,7 +34,6 @@ type appState struct {
 }
 
 type configRequest struct {
-	Provider        string             `json:"provider"`
 	Models          []string           `json:"models"`
 	ModelGroups     []alive.ModelGroup `json:"model_groups"`
 	ModelLoopCounts map[string]int     `json:"model_loop_counts"`
@@ -196,7 +195,6 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	cfg.Provider = strings.TrimSpace(req.Provider)
 	cfg.ModelGroups = req.ModelGroups
 	cfg.Models = req.Models
 	cfg.ModelLoopCounts = req.ModelLoopCounts

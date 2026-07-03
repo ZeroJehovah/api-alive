@@ -44,7 +44,7 @@ func TestConfigDefaultsNewModelLoopCountToOne(t *testing.T) {
 	}
 }
 
-func TestConfigDefaultsProviderCommandsAndRejectsUnknownProvider(t *testing.T) {
+func TestConfigDefaultsCommandsAndRejectsUnknownInternalProvider(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Provider = ""
 	cfg.CodexCommand = ""
@@ -94,15 +94,10 @@ func TestConfigPreservesModelGroupsAndFlattensModels(t *testing.T) {
 	}
 }
 
-func TestConfigUsesGlobalProviderForLegacyGroups(t *testing.T) {
+func TestConfigFindsProviderFromModelGroup(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.Provider = ProviderClaude
-	cfg.Models = []string{"sonnet"}
+	cfg.ModelGroups = []ModelGroup{{Name: "Claude", Provider: ProviderClaude, Models: []string{"sonnet"}}}
 	cfg.ApplyDefaults()
-	wantGroups := []ModelGroup{{Name: "Default", Provider: ProviderClaude, Models: []string{"sonnet"}}}
-	if !reflect.DeepEqual(cfg.ModelGroups, wantGroups) {
-		t.Fatalf("model groups = %#v, want %#v", cfg.ModelGroups, wantGroups)
-	}
 	if got := cfg.ProviderForModel("sonnet"); got != ProviderClaude {
 		t.Fatalf("ProviderForModel = %q, want %q", got, ProviderClaude)
 	}

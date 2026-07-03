@@ -1,5 +1,4 @@
 {
-  "provider": "codex",
   "models": ["gpt-5", "sonnet"],
   "model_groups": [
     {"name": "Codex", "provider": "codex", "models": ["gpt-5"]},
