@@ -9,6 +9,20 @@ import (
 
 const testAttemptSpacing = time.Millisecond
 
+func TestRunnerBuildsClaudeCommandWhenConfigured(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Provider = ProviderClaude
+	cfg.Models = []string{"sonnet"}
+	r := Runner{Config: cfg}
+
+	cmd := r.shellCommand("sonnet", PromptCase{Input: "Say OK."})
+	for _, want := range []string{"'claude' --model 'sonnet'", "--print", "--no-session-persistence", "'Say OK.'"} {
+		if !strings.Contains(cmd, want) {
+			t.Fatalf("command %q does not contain %q", cmd, want)
+		}
+	}
+}
+
 func TestRunnerRetriesUntilExpectedOutputMatches(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Models = []string{"a"}

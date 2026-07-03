@@ -34,11 +34,13 @@ type appState struct {
 }
 
 type configRequest struct {
+	Provider        string             `json:"provider"`
 	Models          []string           `json:"models"`
 	ModelGroups     []alive.ModelGroup `json:"model_groups"`
 	ModelLoopCounts map[string]int     `json:"model_loop_counts"`
 	TimeoutSeconds  int                `json:"timeout_seconds"`
 	CodexCommand    string             `json:"codex_command"`
+	ClaudeCommand   string             `json:"claude_command"`
 	MaxOutputChars  int                `json:"max_output_chars"`
 	ListenAddr      string             `json:"listen_addr"`
 }
@@ -196,11 +198,17 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	cfg.ModelGroups = alive.NormalizeModelGroups(req.ModelGroups, req.Models)
 	cfg.Models = alive.FlattenModelGroups(cfg.ModelGroups)
 	cfg.ModelLoopCounts = req.ModelLoopCounts
+	cfg.Provider = strings.TrimSpace(req.Provider)
 	cfg.TimeoutSeconds = req.TimeoutSeconds
 	cfg.CodexCommand = strings.TrimSpace(req.CodexCommand)
+	cfg.ClaudeCommand = strings.TrimSpace(req.ClaudeCommand)
 	cfg.MaxOutputChars = req.MaxOutputChars
 	cfg.ListenAddr = strings.TrimSpace(req.ListenAddr)
 	cfg.ApplyDefaults()
+	if cfg.Provider != alive.ProviderCodex && cfg.Provider != alive.ProviderClaude {
+		writeError(w, http.StatusBadRequest, "unsupported provider: "+cfg.Provider)
+		return
+	}
 	if err := alive.SaveConfig(s.configPath, cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

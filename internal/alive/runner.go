@@ -226,6 +226,9 @@ func (r Runner) shellCommand(model string, prompt PromptCase) string {
 	if r.commandBuilder != nil {
 		return r.commandBuilder(model, prompt)
 	}
+	if r.Config.Provider == ProviderClaude {
+		return ClaudeShellCommand(r.Config.ClaudeCommand, model, prompt)
+	}
 	return CodexShellCommand(r.Config.CodexCommand, model, prompt)
 }
 

@@ -44,6 +44,24 @@ func TestConfigDefaultsNewModelLoopCountToOne(t *testing.T) {
 	}
 }
 
+func TestConfigDefaultsProviderCommandsAndRejectsUnknownProvider(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Provider = ""
+	cfg.CodexCommand = ""
+	cfg.ClaudeCommand = ""
+	cfg.Models = []string{"a"}
+	cfg.ApplyDefaults()
+	if cfg.Provider != ProviderCodex || cfg.CodexCommand != "codex" || cfg.ClaudeCommand != "claude" {
+		t.Fatalf("defaults = provider %q codex %q claude %q", cfg.Provider, cfg.CodexCommand, cfg.ClaudeCommand)
+	}
+
+	cfg.Provider = "bad"
+	cfg.ApplyDefaults()
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() accepted unsupported provider")
+	}
+}
+
 func TestConfigMigratesFlatModelsToDefaultGroup(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Models = []string{"a", "b", "a"}

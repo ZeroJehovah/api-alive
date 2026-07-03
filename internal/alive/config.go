@@ -9,6 +9,7 @@ import (
 )
 
 type Config struct {
+	Provider        string         `json:"provider"`
 	Models          []string       `json:"models"`
 	ModelGroups     []ModelGroup   `json:"model_groups,omitempty"`
 	ModelLoopCounts map[string]int `json:"model_loop_counts,omitempty"`
@@ -16,6 +17,7 @@ type Config struct {
 	// LoopCount is kept only for backward compatibility with older config files.
 	LoopCount      int    `json:"loop_count,omitempty"`
 	CodexCommand   string `json:"codex_command"`
+	ClaudeCommand  string `json:"claude_command"`
 	ListenAddr     string `json:"listen_addr"`
 	MaxOutputChars int    `json:"max_output_chars"`
 }
@@ -25,10 +27,17 @@ type ModelGroup struct {
 	Models []string `json:"models"`
 }
 
+const (
+	ProviderCodex  = "codex"
+	ProviderClaude = "claude"
+)
+
 func DefaultConfig() Config {
 	return Config{
+		Provider:       ProviderCodex,
 		TimeoutSeconds: 120,
 		CodexCommand:   "codex",
+		ClaudeCommand:  "claude",
 		ListenAddr:     "0.0.0.0:8080",
 		MaxOutputChars: 4000,
 	}
@@ -61,11 +70,15 @@ func SaveConfig(path string, cfg Config) error {
 }
 
 func (c *Config) ApplyDefaults() {
+	c.Provider = normalizeProvider(c.Provider)
 	if c.TimeoutSeconds <= 0 {
 		c.TimeoutSeconds = 120
 	}
 	if c.CodexCommand == "" {
 		c.CodexCommand = "codex"
+	}
+	if c.ClaudeCommand == "" {
+		c.ClaudeCommand = "claude"
 	}
 	if c.ListenAddr == "" {
 		c.ListenAddr = "0.0.0.0:8080"
@@ -80,6 +93,11 @@ func (c *Config) ApplyDefaults() {
 }
 
 func (c Config) Validate() error {
+	switch c.Provider {
+	case ProviderCodex, ProviderClaude:
+	default:
+		return errors.New("unsupported provider: " + c.Provider)
+	}
 	if len(c.Models) == 0 {
 		return errors.New("at least one model is required")
 	}
@@ -309,4 +327,12 @@ func clampLoopCount(loopCount int) int {
 		return 99
 	}
 	return loopCount
+}
+
+func normalizeProvider(provider string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return ProviderCodex
+	}
+	return provider
 }
