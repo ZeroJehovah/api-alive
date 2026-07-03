@@ -150,7 +150,7 @@ const indexHTML = `<!doctype html>
     .settings { display: grid; gap: 10px; }
     .settings .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .settings label { gap: 5px; }
-    .settings input, .settings select, .settings button {
+    .settings input, .settings button {
       min-height: 30px;
       padding: 0 10px;
       font-size: 12px;
@@ -478,12 +478,6 @@ const indexHTML = `<!doctype html>
           </div>
         </header>
         <div class="body settings">
-          <label>Default provider
-            <select id="providerSelect">
-              <option value="codex">Codex</option>
-              <option value="claude">Claude</option>
-            </select>
-          </label>
           <label>Codex command
             <input id="codexCommand" placeholder="codex">
           </label>
@@ -594,15 +588,14 @@ const indexHTML = `<!doctype html>
       return providerValue(value) === 'claude' ? 'Claude' : 'Codex';
     }
     function configGroups(config) {
-      const defaultProvider = providerValue(config?.provider);
       const groups = (config?.model_groups || []).map(group => ({
         name: String(group.name || defaultGroupName()).trim() || defaultGroupName(),
-        provider: providerValue(group.provider || defaultProvider),
+        provider: providerValue(group.provider),
         models: [...(group.models || [])],
       })).filter(group => group.models.length > 0);
       if (groups.length) return groups;
       const models = [...(config?.models || [])];
-      return models.length ? [{ name: defaultGroupName(), provider: defaultProvider, models }] : [];
+      return models.length ? [{ name: defaultGroupName(), provider: providerValue(''), models }] : [];
     }
     function flattenGroups(groups) {
       const seen = new Set();
@@ -1563,8 +1556,6 @@ const indexHTML = `<!doctype html>
       updateFavicon();
     }
     function fillForm(config) {
-      const provider = providerValue(config.provider);
-      $('providerSelect').value = provider;
       $('codexCommand').value = config.codex_command || 'codex';
       $('claudeCommand').value = config.claude_command || 'claude';
       $('listenAddr').value = config.listen_addr || '0.0.0.0:8080';
@@ -1820,7 +1811,7 @@ const indexHTML = `<!doctype html>
       const cfg = { ...state.config };
       cfg.model_groups = configGroups(cfg);
       cfg.models = flattenGroups(cfg.model_groups);
-      cfg.provider = providerValue($('providerSelect').value);
+      delete cfg.provider;
       cfg.codex_command = $('codexCommand').value.trim() || 'codex';
       cfg.claude_command = $('claudeCommand').value.trim() || 'claude';
       cfg.listen_addr = $('listenAddr').value.trim() || '0.0.0.0:8080';
@@ -1838,7 +1829,7 @@ const indexHTML = `<!doctype html>
       name = name.trim();
       if (!name || !state.editing) return;
       if (!state.draftModels.includes(name)) {
-        if (!state.draftGroups.length) state.draftGroups.push({ _id: newDraftGroupID(), name: defaultGroupName(), provider: providerValue($('providerSelect').value), models: [] });
+        if (!state.draftGroups.length) state.draftGroups.push({ _id: newDraftGroupID(), name: defaultGroupName(), provider: providerValue(''), models: [] });
         const selectedGroupID = $('newModelGroup').value;
         let groupIndex = state.draftGroups.findIndex(group => group._id === selectedGroupID);
         if (groupIndex < 0) groupIndex = Math.max(0, state.draftGroups.length - 1);
@@ -1860,7 +1851,7 @@ const indexHTML = `<!doctype html>
         index++;
         name = base + ' ' + index;
       }
-      state.draftGroups.push({ _id: newDraftGroupID(), name, provider: providerValue($('providerSelect').value), models: [] });
+      state.draftGroups.push({ _id: newDraftGroupID(), name, provider: providerValue(''), models: [] });
       updateAddGroupSelect();
       $('newModelGroup').value = state.draftGroups[state.draftGroups.length - 1]._id;
       renderModels();
@@ -1884,7 +1875,7 @@ const indexHTML = `<!doctype html>
         state.editing = true;
         state.nextDraftGroupID = 1;
         state.draftGroups = configGroups(state.config).map(group => ({ _id: newDraftGroupID(), name: group.name, provider: providerValue(group.provider), models: [...group.models] }));
-        if (!state.draftGroups.length) state.draftGroups = [{ _id: newDraftGroupID(), name: defaultGroupName(), provider: providerValue(state.config.provider), models: [] }];
+        if (!state.draftGroups.length) state.draftGroups = [{ _id: newDraftGroupID(), name: defaultGroupName(), provider: providerValue(''), models: [] }];
         state.draftModels = flattenGroups(state.draftGroups);
         state.draftModelLoopCounts = loopCountsForModels(state.draftModels, state.config.model_loop_counts || {});
         state.editLockedModels = new Set(state.runningModels);
