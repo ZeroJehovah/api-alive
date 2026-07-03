@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -511,6 +512,90 @@ func TestProbeTaskStartDoesNotReviveCompletedRuns(t *testing.T) {
 	}
 	if !reflect.DeepEqual(next.RunningModels, []string{"model-a", "model-c"}) {
 		t.Fatalf("completed model was revived as running: %#v", next.RunningModels)
+	}
+}
+
+func TestProbeTaskRecoversRunsWhenRunningFlagIsStale(t *testing.T) {
+	store := &taskStore{}
+	task, runs, err := store.start([]string{"backup-a"}, map[string]int{"backup-a": 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backupCtx := runCtxByModel(t, runs, "backup-a")
+
+	store.mu.Lock()
+	store.task.Running = false
+	store.task.RunningModels = nil
+	store.mu.Unlock()
+
+	snap := store.snapshot()
+	if !snap.Running || !reflect.DeepEqual(snap.RunningModels, []string{"backup-a"}) {
+		t.Fatalf("snapshot did not recover active run: %#v", snap)
+	}
+
+	next, nextRuns, err := store.start([]string{"free-a"}, map[string]int{"free-a": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-backupCtx:
+		t.Fatal("starting another model canceled or lost the stale active run")
+	default:
+	}
+	if !reflect.DeepEqual(next.RunningModels, []string{"backup-a", "free-a"}) {
+		t.Fatalf("running models after start = %#v", next.RunningModels)
+	}
+
+	if _, err := store.stopModels([]string{"backup-a"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-backupCtx:
+	case <-time.After(time.Second):
+		t.Fatal("stop did not cancel recovered active run")
+	}
+	store.finishRun(task.ID, runIDByModel(t, runs, "backup-a"), "backup-a")
+	if got := store.snapshot().RunningModels; !reflect.DeepEqual(got, []string{"free-a"}) {
+		t.Fatalf("running models after stale run finished = %#v", got)
+	}
+	store.finishRun(next.ID, runIDByModel(t, nextRuns, "free-a"), "free-a")
+}
+
+func TestProbeTaskFinishRemovesRunWhenTaskIDIsStale(t *testing.T) {
+	store := &taskStore{}
+	task, runs, err := store.start([]string{"backup-a"}, map[string]int{"backup-a": 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	store.task.ID++
+	store.mu.Unlock()
+
+	store.finishRun(task.ID, runIDByModel(t, runs, "backup-a"), "backup-a")
+	snap := store.snapshot()
+	if snap.Running || len(snap.RunningModels) != 0 {
+		t.Fatalf("stale run remained visible after finish: %#v", snap)
+	}
+}
+
+func TestCurrentRunContextCancelsWhenRunBecomesStale(t *testing.T) {
+	store := &taskStore{}
+	srv := &server{tasks: store}
+	task, runs, err := store.start([]string{"backup-a"}, map[string]int{"backup-a": 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := srv.currentRunContext(context.Background(), task.ID, runIDByModel(t, runs, "backup-a"), "backup-a")
+	defer cancel()
+
+	store.mu.Lock()
+	store.task.ID++
+	store.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(2*runLivenessCheckInterval + 500*time.Millisecond):
+		t.Fatal("run context was not canceled after run became stale")
 	}
 }
 
