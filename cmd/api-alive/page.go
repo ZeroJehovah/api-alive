@@ -409,7 +409,7 @@ const indexHTML = `<!doctype html>
       text-overflow: ellipsis;
     }
     .log-time-col { width: 154px; }
-    .log-status-col { width: 88px; }
+    .log-status-col { width: 112px; }
     .log-model-col { width: 30ch; }
     .log-attempt-col { width: 72px; }
     .log-seconds-col { width: 80px; }
