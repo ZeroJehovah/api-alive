@@ -405,6 +405,36 @@ func TestConfigEndpointPersistsModelGroups(t *testing.T) {
 	}
 }
 
+func TestProbeRunnerConfigDoesNotExpandBatchGroups(t *testing.T) {
+	cfg := alive.DefaultConfig()
+	cfg.ModelGroups = []alive.ModelGroup{
+		{Name: "fast", Models: []string{"model-a", "model-b"}},
+		{Name: "slow", Models: []string{"model-c"}},
+	}
+	cfg.ModelLoopCounts = map[string]int{"model-a": 2, "model-b": 5, "model-c": 10}
+	cfg.ApplyDefaults()
+
+	runnerCfg := probeRunnerConfig(cfg, []string{"model-b", "model-c"})
+	if !reflect.DeepEqual(runnerCfg.Models, []string{"model-b", "model-c"}) {
+		t.Fatalf("runner models = %#v, want selected models only", runnerCfg.Models)
+	}
+	if _, ok := runnerCfg.ModelLoopCounts["model-a"]; ok {
+		t.Fatalf("runner loop counts kept unselected model: %#v", runnerCfg.ModelLoopCounts)
+	}
+
+	modelCfg := singleModelRunnerConfig(runnerCfg, "model-b")
+	modelCfg.ApplyDefaults()
+	if !reflect.DeepEqual(modelCfg.Models, []string{"model-b"}) {
+		t.Fatalf("single-model runner models = %#v, want model-b only", modelCfg.Models)
+	}
+	if !reflect.DeepEqual(modelCfg.ModelGroups, []alive.ModelGroup{{Name: "Default", Models: []string{"model-b"}}}) {
+		t.Fatalf("single-model runner groups = %#v", modelCfg.ModelGroups)
+	}
+	if !reflect.DeepEqual(modelCfg.ModelLoopCounts, map[string]int{"model-b": 5}) {
+		t.Fatalf("single-model loop counts = %#v", modelCfg.ModelLoopCounts)
+	}
+}
+
 func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *testing.T) {
 	store := &taskStore{}
 	task, runs, err := store.start([]string{"model-a", "model-b"}, map[string]int{"model-a": 2, "model-b": 2})

@@ -284,9 +284,7 @@ func (s *server) handleProbe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	runnerCfg := cfg
-	runnerCfg.Models = models
-	runnerCfg.ApplyDefaults()
+	runnerCfg := probeRunnerConfig(cfg, models)
 	if err := runnerCfg.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -297,12 +295,26 @@ func (s *server) handleProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, run := range runs {
-		modelCfg := runnerCfg
-		modelCfg.Models = []string{run.Model}
-		runner := alive.Runner{Config: modelCfg, Prompts: alive.DefaultPrompts}
+		runner := alive.Runner{Config: singleModelRunnerConfig(runnerCfg, run.Model), Prompts: alive.DefaultPrompts}
 		go s.runProbeTask(run.Ctx, task.ID, run.ID, runner)
 	}
 	writeJSON(w, probeResponse{Task: task, Config: cfg})
+}
+
+func probeRunnerConfig(cfg alive.Config, models []string) alive.Config {
+	runnerCfg := cfg
+	runnerCfg.Models = append([]string(nil), models...)
+	runnerCfg.ModelGroups = nil
+	runnerCfg.ApplyDefaults()
+	return runnerCfg
+}
+
+func singleModelRunnerConfig(cfg alive.Config, model string) alive.Config {
+	modelCfg := cfg
+	modelCfg.Models = []string{model}
+	modelCfg.ModelGroups = nil
+	modelCfg.ApplyDefaults()
+	return modelCfg
 }
 
 func (s *server) handleStopProbe(w http.ResponseWriter, r *http.Request) {
