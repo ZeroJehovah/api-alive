@@ -23,6 +23,7 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`<tbody id="logList"></tbody>`,
 		`maxLogEntries = 100`,
 		`text-overflow: ellipsis`,
+		`.log-status-col { width: 112px; }`,
 		`.log-model-col { width: 30ch; }`,
 		`<td class="log-error" title="' + escapeText(errorText) + '">`,
 		`<th>Time</th><th>Status</th><th>Model</th><th>Try</th><th>Seconds</th><th>Error</th>`,
