@@ -1,8 +1,8 @@
 # api-alive
 
-`api-alive` 是一个部署在 VPS 上的 Codex 模型测活 Web 服务。它运行在 Ubuntu 上，调用本机安装的 `codex` 命令，并行探测一个或多个配置模型的可用性。
+`api-alive` 是一个部署在 VPS 上的 CLI 模型测活 Web 服务。它运行在 Ubuntu 上，调用本机安装的 `codex` 或 `claude` 命令，并行探测一个或多个配置模型的可用性。
 
-当前目标部署环境是 ARM CPU 的 Ubuntu 24 VPS，并假设 VPS 上已经安装且可直接执行 `codex`。
+当前目标部署环境是 ARM CPU 的 Ubuntu 24 VPS，并假设 VPS 上已经安装且可直接执行所选 provider 对应的 CLI。
 
 ## 构建
 
@@ -50,10 +50,12 @@ http://<vps-ip>:8080
 
 ```json
 {
+  "provider": "codex",
   "models": ["gpt-5"],
   "model_loop_counts": {"gpt-5": 1},
   "timeout_seconds": 120,
   "codex_command": "codex",
+  "claude_command": "claude",
   "listen_addr": "0.0.0.0:8080",
   "max_output_chars": 4000
 }
@@ -63,8 +65,10 @@ http://<vps-ip>:8080
 
 - `models`：Web 页面展示和测活时可选择的模型名。
 - `model_loop_counts`：每个模型的最大尝试次数；新增模型默认是 1，可在 Models 面板修改；任一尝试成功后立即停止该模型后续尝试。
+- `provider`：测活时使用的 CLI provider，可选 `codex` 或 `claude`。
 - `timeout_seconds`：单次尝试的超时时间。
 - `codex_command`：VPS 上用于调用 Codex 的命令。
+- `claude_command`：VPS 上用于调用 Claude Code 的命令。
 - `listen_addr`：Web 服务监听地址。
 - `max_output_chars`：单个测活结果最多返回的输出字符数。
 
@@ -76,6 +80,12 @@ http://<vps-ip>:8080
 codex exec --model <model> --skip-git-repo-check --ephemeral <prompt>
 ```
 
-只有当 Codex 命令成功退出，并且输出中包含所选内置短提示语的预期答案时，测活才算成功。
+或：
 
-失败包括命令执行失败、超时和输出不符合预期。命令执行失败时，错误信息优先取 Codex 输出里的最后一条 `ERROR:` 行，其次取最后一行输出，最后才使用进程错误。
+```sh
+claude --model <model> --print --no-session-persistence <prompt>
+```
+
+只有当所选 CLI 命令成功退出，并且输出中包含所选内置短提示语的预期答案时，测活才算成功。
+
+失败包括命令执行失败、超时和输出不符合预期。命令执行失败时，错误信息优先取 CLI 输出里的最后一条 `ERROR:` 行，其次取最后一行输出，最后才使用进程错误。

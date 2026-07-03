@@ -13,3 +13,12 @@ func TestCodexShellCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeShellCommand(t *testing.T) {
+	cmd := ClaudeShellCommand("claude", "sonnet", PromptCase{Input: "Say OK."})
+	for _, want := range []string{"'claude' --model 'sonnet'", "--print", "--no-session-persistence", "'Say OK.'"} {
+		if !strings.Contains(cmd, want) {
+			t.Fatalf("command %q does not contain %q", cmd, want)
+		}
+	}
+}

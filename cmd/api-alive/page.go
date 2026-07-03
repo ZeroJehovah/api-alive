@@ -150,7 +150,7 @@ const indexHTML = `<!doctype html>
     .settings { display: grid; gap: 10px; }
     .settings .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .settings label { gap: 5px; }
-    .settings input, .settings button {
+    .settings input, .settings select, .settings button {
       min-height: 30px;
       padding: 0 10px;
       font-size: 12px;
@@ -448,7 +448,7 @@ const indexHTML = `<!doctype html>
     <section class="top">
       <div class="brand">
         <h1>API Alive</h1>
-        <p>VPS Codex model liveness dashboard</p>
+        <p>VPS CLI model liveness dashboard</p>
       </div>
       <div class="status">
         <div><strong id="configPath">config.json</strong></div>
@@ -466,8 +466,17 @@ const indexHTML = `<!doctype html>
           </div>
         </header>
         <div class="body settings">
+          <label>Provider
+            <select id="providerSelect">
+              <option value="codex">Codex</option>
+              <option value="claude">Claude</option>
+            </select>
+          </label>
           <label>Codex command
             <input id="codexCommand" placeholder="codex">
+          </label>
+          <label>Claude command
+            <input id="claudeCommand" placeholder="claude">
           </label>
           <label>Listen address
             <input id="listenAddr" placeholder="0.0.0.0:8080">
@@ -1520,7 +1529,10 @@ const indexHTML = `<!doctype html>
       updateFavicon();
     }
     function fillForm(config) {
+      const provider = String(config.provider || 'codex').toLowerCase();
+      $('providerSelect').value = provider === 'claude' ? 'claude' : 'codex';
       $('codexCommand').value = config.codex_command || 'codex';
+      $('claudeCommand').value = config.claude_command || 'claude';
       $('listenAddr').value = config.listen_addr || '0.0.0.0:8080';
       $('timeoutSeconds').value = config.timeout_seconds || 120;
       $('maxOutputChars').value = config.max_output_chars || 4000;
@@ -1774,7 +1786,9 @@ const indexHTML = `<!doctype html>
       const cfg = { ...state.config };
       cfg.model_groups = configGroups(cfg);
       cfg.models = flattenGroups(cfg.model_groups);
+      cfg.provider = $('providerSelect').value || 'codex';
       cfg.codex_command = $('codexCommand').value.trim() || 'codex';
+      cfg.claude_command = $('claudeCommand').value.trim() || 'claude';
       cfg.listen_addr = $('listenAddr').value.trim() || '0.0.0.0:8080';
       cfg.timeout_seconds = Number($('timeoutSeconds').value) || 120;
       cfg.model_loop_counts = loopCountsForModels(cfg.models || [], cfg.model_loop_counts || {});

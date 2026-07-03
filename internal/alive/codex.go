@@ -19,6 +19,16 @@ func CodexShellCommand(command, model string, prompt PromptCase) string {
 	}, " ")
 }
 
+func ClaudeShellCommand(command, model string, prompt PromptCase) string {
+	return strings.Join([]string{
+		shellQuote(command),
+		"--model", shellQuote(model),
+		"--print",
+		"--no-session-persistence",
+		shellQuote(prompt.Input),
+	}, " ")
+}
+
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
