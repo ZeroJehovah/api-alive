@@ -228,6 +228,7 @@ const indexHTML = `<!doctype html>
       border-bottom: 1px solid var(--line);
     }
     .model-group-header.collapsed { border-bottom: 0; }
+    .model-group-header[data-toggle-header] { cursor: pointer; }
     .model-group-body {
       height: auto;
       opacity: 1;
@@ -277,32 +278,41 @@ const indexHTML = `<!doctype html>
       font-weight: 700;
       font-size: 13px;
     }
-    .group-title span:first-child {
+    .group-title .group-name {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .provider-badge {
+    .provider-icon {
       flex: 0 0 auto;
-      padding: 2px 7px;
-      border: 1px solid rgba(15, 118, 110, .22);
-      border-radius: 999px;
-      background: rgba(15, 118, 110, .08);
-      color: var(--accent-dark);
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-    }
-    .group-count { color: var(--muted); font-weight: 500; }
-    .group-select {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      color: var(--muted);
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+    }
+    .provider-icon svg { display: block; width: 18px; height: 18px; }
+    .group-count { color: var(--muted); font-weight: 500; }
+    .group-stats {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
       font-size: 12px;
       white-space: nowrap;
     }
-    .group-select input { width: 16px; height: 16px; min-height: 16px; padding: 0; }
+    .group-stat-success { color: var(--ok); }
+    .group-stat-failed { color: var(--danger); }
+    .group-stat-running { color: #1d4ed8; }
+    .group-select-checkbox {
+      width: 16px;
+      height: 16px;
+      min-height: 16px;
+      padding: 0;
+      margin: 0;
+      display: block;
+    }
     .group-name-input { max-width: 260px; min-height: 28px; padding: 0 8px; font-size: 12px; font-weight: 600; }
     .group-provider-select { width: 96px; min-height: 28px; padding: 0 8px; font-size: 12px; }
     .drag-handle {
@@ -549,7 +559,7 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftGroups: [], draftModels: [], draftModelLoopCounts: {}, nextDraftGroupID: 1, dirtyLoopCounts: new Set(), editLockedModels: new Set(), collapsedGroups: new Set(), dragModel: '', dragGroupID: '', optimisticStarts: new Map(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Map(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), failureFaviconPrimed: false, backgroundSuccessFavicon: false, backgroundFailedFavicon: false, handledFailureFaviconKey: '', faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
+    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftGroups: [], draftModels: [], draftModelLoopCounts: {}, nextDraftGroupID: 1, dirtyLoopCounts: new Set(), editLockedModels: new Set(), collapsedGroups: new Set(), groupsCollapsedInitialized: false, dragModel: '', dragGroupID: '', optimisticStarts: new Map(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Map(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), failureFaviconPrimed: false, backgroundSuccessFavicon: false, backgroundFailedFavicon: false, handledFailureFaviconKey: '', faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
     const maxLogEntries = 100;
     const idlePollMS = 60000;
     const runningPollMS = 5000;
@@ -586,6 +596,12 @@ const indexHTML = `<!doctype html>
     }
     function providerLabel(value) {
       return providerValue(value) === 'claude' ? 'Claude' : 'Codex';
+    }
+    function providerIconHTML(value) {
+      if (providerValue(value) === 'claude') {
+        return '<span class="provider-icon" title="Claude" aria-label="Claude"><svg viewBox="0 0 24 24" role="img" aria-hidden="true"><path d="M12 2.7l2.3 6.1 6.5-2.2-3.6 5.4 5.4 3.6-6.5.5.5 6.5-4.6-4.6-4.6 4.6.5-6.5-6.5-.5 5.4-3.6-3.6-5.4 6.5 2.2L12 2.7z" fill="#d97757"/></svg></span>';
+      }
+      return '<span class="provider-icon" title="Codex" aria-label="Codex"><svg viewBox="0 0 24 24" role="img" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" fill="#111827"/><path d="M7.3 9.2l3.1 2.8-3.1 2.8" fill="none" stroke="#10b981" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M12.5 15h4.2" fill="none" stroke="#93c5fd" stroke-width="1.9" stroke-linecap="round"/></svg></span>';
     }
     function configGroups(config) {
       const groups = (config?.model_groups || []).map(group => ({
@@ -1385,6 +1401,26 @@ const indexHTML = `<!doctype html>
       state.draftModels = flattenGroups(groups);
       return true;
     }
+    function groupResultStats(group) {
+      const stats = { success: 0, failed: 0, running: 0 };
+      (group.models || []).forEach(model => {
+        if (state.runningModels.has(model)) {
+          stats.running++;
+          return;
+        }
+        const res = resultFor(model);
+        if (!res) return;
+        if (res.success) stats.success++;
+        else if (res.success === false) stats.failed++;
+      });
+      return stats;
+    }
+    function groupStatsHTML(group) {
+      const stats = groupResultStats(group);
+      return '<span class="group-stat-success">Success: ' + stats.success + ',</span>' +
+        '<span class="group-stat-failed">Failed: ' + stats.failed + ',</span>' +
+        '<span class="group-stat-running">Running: ' + stats.running + '</span>';
+    }
     function createModelsTable(models) {
       const groups = visibleGroups();
       if (modelTableNeedsReset('view')) {
@@ -1419,14 +1455,18 @@ const indexHTML = `<!doctype html>
       section.className = 'model-group';
       section.dataset.viewGroup = String(groupIndex);
       section.innerHTML = '<div class="model-group-header">' +
-        '<button type="button" class="group-toggle" data-toggle-group="' + groupIndex + '">▾</button>' +
-        '<div class="group-title"><span></span><span class="provider-badge"></span><span class="group-count"></span></div>' +
-        '<label class="group-select"><input data-select-group="' + groupIndex + '" type="checkbox">Select group</label>' +
+        '<div class="group-title"><span class="provider-icon-host"></span><span class="group-name"></span><span class="group-count"></span></div>' +
+        '<div class="group-stats"></div>' +
         '</div><div class="model-group-body"><div class="model-group-body-inner"><table class="model-table"><thead><tr>' +
-        '<th class="check"></th><th class="model-heading">Model</th><th class="result">Result</th><th class="progress">Progress</th>' +
+        '<th class="check"><input class="group-select-checkbox" data-select-group="' + groupIndex + '" type="checkbox" title="Select group"></th><th class="model-heading">Model</th><th class="result">Result</th><th class="progress">Progress</th>' +
         '<th class="result-time">Result time</th><th class="attempt-limit">Retries</th><th class="row-actions"></th>' +
         '</tr></thead><tbody></tbody></table></div></div>';
-      section.querySelector('[data-toggle-group]').addEventListener('click', () => toggleGroupCollapsed(groupIndex));
+      const header = section.querySelector('.model-group-header');
+      header.dataset.toggleHeader = String(groupIndex);
+      header.addEventListener('click', event => {
+        if (event.target.closest('input, select, button')) return;
+        toggleGroupCollapsed(Number(header.dataset.toggleHeader || 0));
+      });
       section.querySelector('[data-select-group]').addEventListener('change', event => toggleGroupSelection(groupIndex, event.target.checked));
       return section;
     }
@@ -1436,12 +1476,11 @@ const indexHTML = `<!doctype html>
       const collapsed = state.collapsedGroups.has(key);
       const header = section.querySelector('.model-group-header');
       header.classList.toggle('collapsed', collapsed);
-      const toggle = section.querySelector('[data-toggle-group]');
-      toggle.dataset.toggleGroup = String(groupIndex);
-      toggle.textContent = collapsed ? '▸' : '▾';
-      section.querySelector('.group-title span:first-child').textContent = group.name || defaultGroupName();
-      section.querySelector('.provider-badge').textContent = providerLabel(group.provider);
+      header.dataset.toggleHeader = String(groupIndex);
+      section.querySelector('.provider-icon-host').innerHTML = providerIconHTML(group.provider);
+      section.querySelector('.group-name').textContent = group.name || defaultGroupName();
       section.querySelector('.group-count').textContent = group.models.length + ' model(s)';
+      section.querySelector('.group-stats').innerHTML = groupStatsHTML(group);
       const select = section.querySelector('[data-select-group]');
       select.dataset.selectGroup = String(groupIndex);
       const selectedCount = group.models.filter(model => state.selected.has(model)).length;
@@ -1609,6 +1648,7 @@ const indexHTML = `<!doctype html>
     function applyServerState(data) {
       state.config = mergeDirtyLoopCounts(data.config);
       state.selected = new Set([...state.selected].filter(model => visibleModels().includes(model)));
+      initializeCollapsedGroups();
       $('configPath').textContent = data.config_path || 'config.json';
       fillForm(state.config);
       applyTask(data.task || {});
@@ -1625,8 +1665,17 @@ const indexHTML = `<!doctype html>
       if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
       return data;
     }
-    async function loadState() { setMessage('Loading...'); applyServerState(await request('/api/state')); }
+    async function loadState() {
+      setMessage('Loading...');
+      state.groupsCollapsedInitialized = false;
+      applyServerState(await request('/api/state'));
+    }
     async function pollState() { applyServerState(await request('/api/state')); }
+    function initializeCollapsedGroups() {
+      if (state.groupsCollapsedInitialized || state.editing) return;
+      state.collapsedGroups = new Set(configGroups(state.config).map((group, index) => groupKey(index, group)));
+      state.groupsCollapsedInitialized = true;
+    }
     function orderedModelNames(models) {
       const wanted = new Set(models);
       const ordered = [];
