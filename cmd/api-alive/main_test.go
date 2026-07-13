@@ -43,7 +43,12 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`let taskEventSource = null`,
 		`function connectTaskStream`,
 		`new EventSource('/api/events')`,
-		`applyTask(JSON.parse(event.data) || {})`,
+		`acceptServerTask(JSON.parse(event.data) || {})`,
+		`lastServerTask: {}`,
+		`lastServerRevision: 0`,
+		`function acceptServerTask`,
+		`revision < state.lastServerRevision`,
+		`applyTask(clientTaskCopy(state.lastServerTask));`,
 		`connectTaskStream();`,
 		`window.addEventListener('beforeunload', closeTaskStream);`,
 		`id="notificationBtn"`,
@@ -258,6 +263,13 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`function toggleGroupCollapsed`,
 		`function toggleGroupSelection`,
 		`function renderModelsAnimated`,
+		`function placeChildAt`,
+		`placeChildAt(tbody, row, modelIndex);`,
+		`function modelInsertionIndex`,
+		`function unanimatedRowRect`,
+		`function isGroupEndDropArea`,
+		`const animation = row.animate`,
+		`row.dataset.modelRow === state.dragModel`,
 		`function moveDraftModelTo`,
 		`function moveDraftGroupTo`,
 		`function installGroupDropTarget`,
@@ -297,7 +309,7 @@ func TestIndexHTMLOptimisticallyClearsResults(t *testing.T) {
 		`function optimisticClearResults`,
 		`const running = new Set(state.runningModels);`,
 		`const keptResults = currentTask.results.filter(res => running.has(res.model));`,
-		`state.optimisticClearedResults.set(res.model, { expires_at: expiresAt, base_result_key: resultStateKey(res) });`,
+		`state.optimisticClearedResults.set(res.model, { expires_at: expiresAt, action_id: actionID, base_result_key: resultStateKey(res) });`,
 		`function reconcileOptimisticClearedResults`,
 		`task = reconcileOptimisticClearedResults(task || {});`,
 		`state.optimisticClearedResults.delete(model);`,
@@ -566,8 +578,15 @@ func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *tes
 		t.Fatal("stop canceled unselected model-c context")
 	default:
 	}
-	if !reflect.DeepEqual(stopping.RunningModels, []string{"model-b", "model-c"}) {
-		t.Fatalf("running models before canceled run finishes = %#v", stopping.RunningModels)
+	if !reflect.DeepEqual(stopping.RunningModels, []string{"model-c"}) {
+		t.Fatalf("running models after immediate cancellation = %#v", stopping.RunningModels)
+	}
+	modelBResult := resultByModel(stopping.Results, "model-b")
+	if modelBResult.Error != context.Canceled.Error() || modelBResult.Success {
+		t.Fatalf("stopped model result = %#v", modelBResult)
+	}
+	if len(stopping.Logs) == 0 || stopping.Logs[0].Result.Model != "model-b" || stopping.Logs[0].Result.Error != context.Canceled.Error() {
+		t.Fatalf("stopped model log = %#v", stopping.Logs)
 	}
 	store.finishRun(task.ID, runIDByModel(t, runs, "model-b"), "model-b")
 	if !store.snapshot().Running {
@@ -704,6 +723,45 @@ func TestProbeTaskJSONIncludesLoopCounts(t *testing.T) {
 	if !strings.Contains(string(body), `"loop_counts":{"model-a":3}`) {
 		t.Fatalf("task JSON missing loop_counts: %s", body)
 	}
+	if !strings.Contains(string(body), `"revision":1`) {
+		t.Fatalf("task JSON missing revision: %s", body)
+	}
+}
+
+func TestProbeTaskRevisionStaysMonotonicAcrossStopAndRestart(t *testing.T) {
+	store := &taskStore{}
+	first, firstRuns, err := store.start([]string{"model-a"}, map[string]int{"model-a": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Revision < 1 {
+		t.Fatalf("first revision = %d", first.Revision)
+	}
+
+	stopped, err := store.stopModels([]string{"model-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.Revision <= first.Revision || stopped.Running {
+		t.Fatalf("stopped task = %#v", stopped)
+	}
+
+	restarted, restartedRuns, err := store.start([]string{"model-a"}, map[string]int{"model-a": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restarted.Revision <= stopped.Revision || !restarted.Running {
+		t.Fatalf("restarted task = %#v", restarted)
+	}
+
+	store.applyEvent(first.ID, runIDByModel(t, firstRuns, "model-a"), alive.Event{Type: alive.EventAttempt, Result: alive.Result{Model: "model-a", Attempts: 9, DurationMS: 90}})
+	store.finishRun(first.ID, runIDByModel(t, firstRuns, "model-a"), "model-a")
+	snap := store.snapshot()
+	if snap.Revision != restarted.Revision || !reflect.DeepEqual(snap.RunningModels, []string{"model-a"}) {
+		t.Fatalf("stale stopped run changed restarted task: %#v", snap)
+	}
+	store.stopModels([]string{"model-a"})
+	store.finishRun(restarted.ID, runIDByModel(t, restartedRuns, "model-a"), "model-a")
 }
 
 func TestProbeTaskSubscribersReceiveTaskUpdates(t *testing.T) {

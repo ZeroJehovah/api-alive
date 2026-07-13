@@ -68,6 +68,7 @@ type probeResponse struct {
 
 type probeTask struct {
 	ID            int64           `json:"id"`
+	Revision      int64           `json:"revision"`
 	Running       bool            `json:"running"`
 	Models        []string        `json:"models"`
 	RunningModels []string        `json:"running_models"`
@@ -531,6 +532,7 @@ func (ts *taskStore) start(models []string, loopCounts map[string]int) (probeTas
 	if len(ts.runs) == 0 {
 		ts.nextID++
 		now := time.Now().Format(time.RFC3339)
+		revision := ts.task.Revision
 		results := append([]alive.Result(nil), ts.task.Results...)
 		for _, res := range initialRunningResults(models) {
 			results = upsertResult(results, res)
@@ -544,6 +546,7 @@ func (ts *taskStore) start(models []string, loopCounts map[string]int) (probeTas
 		}
 		ts.task = probeTask{
 			ID:            ts.nextID,
+			Revision:      revision,
 			Running:       true,
 			Models:        alive.AddModels(ts.task.Models, models),
 			RunningModels: append([]string(nil), models...),
@@ -597,17 +600,41 @@ func (ts *taskStore) stopModels(models []string) (probeTask, error) {
 		return cloneTask(ts.task), errors.New("no probe task is running")
 	}
 	stopped := 0
+	now := time.Now().Format(time.RFC3339)
 	for _, model := range models {
 		run, ok := ts.runs[model]
 		if !ok {
 			continue
 		}
 		run.Cancel()
+		delete(ts.runs, model)
+		res := resultByModelName(ts.task.Results, model)
+		if res.Attempts < 1 {
+			res.Attempts = 1
+		}
+		res.Model = model
+		res.Success = false
+		res.ExitCode = nil
+		res.Error = context.Canceled.Error()
+		res.Duration = 0
+		res.DurationMS = 0
+		res.UpdatedAt = now
+		res.AttemptResults = nil
+		ts.task.Results = upsertResult(ts.task.Results, res)
+		ts.prependLogLocked(now, res)
 		stopped++
 	}
 	if stopped == 0 {
 		return cloneTask(ts.task), errors.New("none of the selected models are running")
 	}
+	ts.task.RunningModels = runningModelsInOrder(ts.task.Models, ts.runs)
+	ts.task.Running = len(ts.runs) > 0
+	if !ts.task.Running {
+		ts.task.RunningModels = nil
+		ts.task.FinishedAt = now
+		ts.runs = nil
+	}
+	ts.publishLocked()
 	return cloneTask(ts.task), nil
 }
 
@@ -662,6 +689,7 @@ func (ts *taskStore) subscribe() (<-chan probeTask, func()) {
 }
 
 func (ts *taskStore) publishLocked() {
+	ts.task.Revision++
 	if len(ts.subscribers) == 0 {
 		return
 	}
@@ -892,6 +920,15 @@ func upsertResult(results []alive.Result, res alive.Result) []alive.Result {
 		}
 	}
 	return append(results, res)
+}
+
+func resultByModelName(results []alive.Result, model string) alive.Result {
+	for _, res := range results {
+		if res.Model == model {
+			return res
+		}
+	}
+	return alive.Result{Model: model}
 }
 
 func removeModelName(models []string, model string) []string {
