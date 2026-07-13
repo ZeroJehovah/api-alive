@@ -357,9 +357,7 @@ const indexHTML = `<!doctype html>
       touch-action: none;
     }
     .drag-handle:active { cursor: grabbing; }
-    .model-editor tr {
-      transition: transform .18s ease, background-color .18s ease, opacity .18s ease;
-    }
+    .model-editor tr { transition: background-color .18s ease, opacity .18s ease; }
     .model-editor tr.dragging { opacity: .5; background: rgba(37, 99, 235, .08); }
     .model-editor tbody.drag-over { outline: 2px dashed rgba(37, 99, 235, .35); outline-offset: -3px; }
     .pill {
@@ -586,7 +584,7 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, task: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftGroups: [], draftModels: [], draftModelLoopCounts: {}, nextDraftGroupID: 1, dirtyLoopCounts: new Set(), editLockedModels: new Set(), collapsedGroups: new Set(), groupsCollapsedInitialized: false, dragModel: '', dragGroupID: '', optimisticStarts: new Map(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Map(), successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), failureFaviconPrimed: false, backgroundSuccessFavicon: false, backgroundFailedFavicon: false, handledFailureFaviconKey: '', faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
+    const state = { config: null, task: {}, lastServerTask: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftGroups: [], draftModels: [], draftModelLoopCounts: {}, nextDraftGroupID: 1, dirtyLoopCounts: new Set(), editLockedModels: new Set(), collapsedGroups: new Set(), groupsCollapsedInitialized: false, dragModel: '', dragGroupID: '', optimisticStarts: new Map(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Map(), nextLocalActionID: 1, lastServerRevision: 0, successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), failureFaviconPrimed: false, backgroundSuccessFavicon: false, backgroundFailedFavicon: false, handledFailureFaviconKey: '', faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
     const maxLogEntries = 100;
     const idlePollMS = 60000;
     const runningPollMS = 5000;
@@ -882,7 +880,7 @@ const indexHTML = `<!doctype html>
       taskEventSource.onmessage = event => {
         if (!event.data) return;
         try {
-          applyTask(JSON.parse(event.data) || {});
+          acceptServerTask(JSON.parse(event.data) || {});
         } catch (err) {
           console.warn('task stream parse failed', err);
         }
@@ -1096,22 +1094,36 @@ const indexHTML = `<!doctype html>
       });
       return first;
     }
+    function placeChildAt(parent, child, index) {
+      const current = parent.children[index] || null;
+      if (current !== child) parent.insertBefore(child, current);
+    }
     function animateModelRows(first) {
       requestAnimationFrame(() => {
         document.querySelectorAll('[data-model-row], [data-edit-group-id]').forEach(row => {
+          if (row.dataset.modelRow === state.dragModel || row.dataset.editGroupId === state.dragGroupID) return;
           const key = row.dataset.modelRow ? 'model:' + row.dataset.modelRow : 'group:' + row.dataset.editGroupId;
           const before = first.get(key);
           if (!before) return;
+          if (row._sortAnimation) {
+            row._sortAnimation.cancel();
+            row._sortAnimation = null;
+          }
           const after = row.getBoundingClientRect();
           const dx = before.left - after.left;
           const dy = before.top - after.top;
           if (!dx && !dy) return;
-          row.style.transition = 'none';
-          row.style.transform = 'translate(' + dx + 'px, ' + dy + 'px)';
-          requestAnimationFrame(() => {
-            row.style.transition = 'transform .18s ease, background-color .18s ease, opacity .18s ease, border-color .18s ease, box-shadow .18s ease';
-            row.style.transform = '';
-          });
+          if (typeof row.animate !== 'function' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+          const animation = row.animate([
+            { transform: 'translate(' + dx + 'px, ' + dy + 'px)' },
+            { transform: 'translate(0, 0)' },
+          ], { duration: 180, easing: 'ease' });
+          row._sortAnimation = animation;
+          const clearAnimation = () => {
+            if (row._sortAnimation === animation) row._sortAnimation = null;
+          };
+          animation.onfinish = clearAnimation;
+          animation.oncancel = clearAnimation;
         });
       });
     }
@@ -1188,13 +1200,13 @@ const indexHTML = `<!doctype html>
         if (!section) {
           section = createModelEditorGroup(group);
         }
-        host.appendChild(section);
+        placeChildAt(host, section, groupIndex);
         updateModelEditorGroup(section, group, groupIndex);
         const tbody = section.querySelector('tbody');
-        group.models.forEach(model => {
+        group.models.forEach((model, modelIndex) => {
           let row = modelRow(model);
           if (!row) row = createModelEditorRow(model);
-          tbody.appendChild(row);
+          placeChildAt(tbody, row, modelIndex);
           updateModelEditorRow(model);
         });
         [...tbody.querySelectorAll('[data-model-row]')].forEach(row => {
@@ -1297,18 +1309,6 @@ const indexHTML = `<!doctype html>
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setData('text/plain', model);
       });
-      row.addEventListener('dragover', event => {
-        if (!state.dragModel || state.dragModel === model) return;
-        event.preventDefault();
-        event.stopPropagation();
-        event.dataTransfer.dropEffect = 'move';
-        const targetGroupIndex = Number(row.closest('[data-drop-group]')?.dataset.dropGroup || 0);
-        const targetGroup = state.draftGroups[targetGroupIndex];
-        if (!targetGroup) return;
-        const rect = row.getBoundingClientRect();
-        const targetIndex = targetGroup.models.indexOf(model) + (event.clientY > rect.top + rect.height / 2 ? 1 : 0);
-        if (moveDraftModelTo(state.dragModel, targetGroupIndex, targetIndex)) renderModelsAnimated();
-      });
       row.addEventListener('dragend', cleanupDragState);
 
       row.append(dragCell, modelCell, retryCell, actionCell);
@@ -1326,14 +1326,35 @@ const indexHTML = `<!doctype html>
       del.title = state.editLockedModels.has(model) ? 'Running when editing started' : '';
       row.classList.toggle('dragging', state.dragModel === model);
     }
+    function unanimatedRowRect(row) {
+      const rect = row.getBoundingClientRect();
+      const transform = getComputedStyle(row).transform;
+      if (!transform || transform === 'none' || typeof DOMMatrixReadOnly !== 'function') return rect;
+      try {
+        const matrix = new DOMMatrixReadOnly(transform);
+        return { top: rect.top - matrix.m42, height: rect.height };
+      } catch (_) {
+        return rect;
+      }
+    }
+    function modelInsertionIndex(tbody, clientY) {
+      const rows = [...tbody.querySelectorAll('[data-model-row]')].filter(row => row.dataset.modelRow !== state.dragModel);
+      for (let index = 0; index < rows.length; index++) {
+        const rect = unanimatedRowRect(rows[index]);
+        if (clientY < rect.top + rect.height / 2) return index;
+      }
+      return rows.length;
+    }
     function installDropTarget(tbody) {
       tbody.addEventListener('dragover', event => {
-        if (!state.dragModel || tbody.querySelector('[data-model-row]')) return;
+        if (!state.dragModel) return;
         event.preventDefault();
         event.stopPropagation();
+        event.dataTransfer.dropEffect = 'move';
         const groupIndex = Number(tbody.dataset.dropGroup || 0);
-        tbody.classList.add('drag-over');
-        if (moveDraftModelTo(state.dragModel, groupIndex, 0)) renderModelsAnimated();
+        const targetIndex = modelInsertionIndex(tbody, event.clientY);
+        tbody.classList.toggle('drag-over', tbody.children.length === 0);
+        if (moveDraftModelTo(state.dragModel, groupIndex, targetIndex)) renderModelsAnimated();
       });
       tbody.addEventListener('dragleave', () => tbody.classList.remove('drag-over'));
       tbody.addEventListener('drop', event => {
@@ -1342,16 +1363,26 @@ const indexHTML = `<!doctype html>
         cleanupDragState();
       });
     }
+    function isGroupEndDropArea(section, clientY) {
+      const headerRect = section.querySelector('.model-group-header').getBoundingClientRect();
+      if (clientY >= headerRect.top && clientY <= headerRect.bottom) return true;
+      const rows = [...section.querySelectorAll('tbody [data-model-row]')].filter(row => row.dataset.modelRow !== state.dragModel);
+      if (!rows.length) return true;
+      const lastRect = unanimatedRowRect(rows[rows.length - 1]);
+      return clientY >= lastRect.top + lastRect.height / 2;
+    }
     function installGroupDropTarget(section) {
       section.addEventListener('dragover', event => {
         if (!state.dragModel || event.target.closest('[data-model-row]')) return;
+        if (!isGroupEndDropArea(section, event.clientY)) return;
         event.preventDefault();
         const groupIndex = Number(section.dataset.editGroup || 0);
         const group = state.draftGroups[groupIndex];
         if (!group) return;
         section.classList.add('drop-target');
         event.dataTransfer.dropEffect = 'move';
-        if (moveDraftModelTo(state.dragModel, groupIndex, group.models.length)) renderModelsAnimated();
+        const targetIndex = group.models.filter(model => model !== state.dragModel).length;
+        if (moveDraftModelTo(state.dragModel, groupIndex, targetIndex)) renderModelsAnimated();
       });
       section.addEventListener('dragleave', event => {
         if (!section.contains(event.relatedTarget)) section.classList.remove('drop-target');
@@ -1409,9 +1440,8 @@ const indexHTML = `<!doctype html>
       if (sourceGroupIndex < 0 || !targetGroup) return false;
       const sourceGroup = groups[sourceGroupIndex];
       const sourceIndex = sourceGroup.models.indexOf(model);
-      if (sourceGroupIndex === targetGroupIndex && (targetIndex === sourceIndex || targetIndex === sourceIndex + 1)) return false;
+      if (sourceGroupIndex === targetGroupIndex && targetIndex === sourceIndex) return false;
       sourceGroup.models.splice(sourceIndex, 1);
-      if (sourceGroupIndex === targetGroupIndex && targetIndex > sourceIndex) targetIndex--;
       targetIndex = Math.max(0, Math.min(targetIndex, targetGroup.models.length));
       targetGroup.models.splice(targetIndex, 0, model);
       state.draftModels = flattenGroups(groups);
@@ -1471,13 +1501,13 @@ const indexHTML = `<!doctype html>
         const groupID = String(groupIndex);
         let section = host.querySelector('[data-view-group="' + groupID + '"]');
         if (!section) section = createModelViewGroup(groupIndex);
-        host.appendChild(section);
+        placeChildAt(host, section, groupIndex);
         updateModelViewGroup(section, group, groupIndex);
         const tbody = section.querySelector('tbody');
-        group.models.forEach(model => {
+        group.models.forEach((model, modelIndex) => {
           let row = modelRow(model);
           if (!row) row = createModelRow(model);
-          tbody.appendChild(row);
+          placeChildAt(tbody, row, modelIndex);
         });
         [...tbody.querySelectorAll('[data-model-row]')].forEach(row => {
           if (!group.models.includes(row.dataset.modelRow)) row.remove();
@@ -1582,8 +1612,16 @@ const indexHTML = `<!doctype html>
         '<button type="button" class="secondary table-action" data-run-one="' + escapeText(model) + '">Run</button>' +
         '<button type="button" class="secondary table-action" data-stop-one="' + escapeText(model) + '">Stop</button>' +
         '</div>';
-      actionCell.querySelector('[data-run-one]').addEventListener('click', () => startProbe([model]).catch(err => setMessage(err.message)));
-      actionCell.querySelector('[data-stop-one]').addEventListener('click', () => stopProbe(model).catch(err => setMessage(err.message)));
+      actionCell.querySelector('[data-run-one]').addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        startProbe([model]).catch(err => setMessage(err.message));
+      });
+      actionCell.querySelector('[data-stop-one]').addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        stopProbe(model).catch(err => setMessage(err.message));
+      });
 
       row.append(selectCell, modelCell, resultCell, progressCell, timeCell, retryCell, actionCell);
       return row;
@@ -1652,9 +1690,21 @@ const indexHTML = `<!doctype html>
       connectTaskStream();
       schedulePoll();
     }
+    function acceptServerTask(task) {
+      const revision = Number(task?.revision || 0);
+      if (revision < state.lastServerRevision) {
+        applyTask(clientTaskCopy(state.lastServerTask));
+        return false;
+      }
+      if (revision) state.lastServerRevision = revision;
+      state.lastServerTask = clientTaskCopy(task || {});
+      applyTask(task || {});
+      return true;
+    }
     function snapshotClientState() {
       return {
         task: state.task,
+        lastServerTask: clientTaskCopy(state.lastServerTask),
         running: state.running,
         runningModels: new Set(state.runningModels),
         results: new Map(state.results),
@@ -1663,10 +1713,13 @@ const indexHTML = `<!doctype html>
         optimisticStops: new Map(state.optimisticStops),
         localStopLogs: new Map(state.localStopLogs),
         optimisticClearedResults: new Map(state.optimisticClearedResults),
+        lastServerRevision: state.lastServerRevision,
       };
     }
     function restoreClientState(snapshot) {
+      if (state.lastServerRevision > snapshot.lastServerRevision) return false;
       state.task = snapshot.task;
+      state.lastServerTask = clientTaskCopy(snapshot.lastServerTask);
       state.running = snapshot.running;
       state.runningModels = new Set(snapshot.runningModels);
       state.results = new Map(snapshot.results);
@@ -1675,10 +1728,12 @@ const indexHTML = `<!doctype html>
       state.optimisticStops = new Map(snapshot.optimisticStops);
       state.localStopLogs = new Map(snapshot.localStopLogs);
       state.optimisticClearedResults = new Map(snapshot.optimisticClearedResults);
+      state.lastServerRevision = snapshot.lastServerRevision;
       renderLog();
       renderRunningModels();
       renderModels();
       updateFavicon();
+      return true;
     }
     function applyServerState(data) {
       state.config = mergeDirtyLoopCounts(data.config);
@@ -1686,7 +1741,7 @@ const indexHTML = `<!doctype html>
       initializeCollapsedGroups();
       $('configPath').textContent = data.config_path || 'config.json';
       fillForm(state.config);
-      applyTask(data.task || {});
+      acceptServerTask(data.task || {});
       if (state.running) setMessage('Running ' + state.runningModels.size + ' model(s)...');
       else if (state.optimisticStops.size > 0) setMessage('Stopping ' + state.optimisticStops.size + ' model(s)...');
       else if (state.task?.id && state.task.error) setMessage('Last task failed: ' + state.task.error);
@@ -1732,6 +1787,7 @@ const indexHTML = `<!doctype html>
       const currentTask = state.task || {};
       const taskModels = [...(currentTask.models || [])];
       const expiresAt = localTrustExpiresAt();
+      const actionID = state.nextLocalActionID++;
       models.forEach(model => {
         state.optimisticClearedResults.delete(model);
         state.optimisticStops.delete(model);
@@ -1744,6 +1800,7 @@ const indexHTML = `<!doctype html>
         const result = { model, attempts: 1 };
         state.optimisticStarts.set(model, {
           expires_at: expiresAt,
+          action_id: actionID,
           loop_count: normalizeLoopCount(loopCounts[model]),
           base_result_key: resultStateKey(state.results.get(model)),
           result,
@@ -1761,6 +1818,7 @@ const indexHTML = `<!doctype html>
       renderRunningModels();
       renderModels();
       updateFavicon();
+      return actionID;
     }
     function clientTaskCopy(task) {
       return {
@@ -1800,13 +1858,15 @@ const indexHTML = `<!doctype html>
       const currentTask = clientTaskCopy(state.task || {});
       const keptResults = currentTask.results.filter(res => running.has(res.model));
       const expiresAt = localTrustExpiresAt();
+      const actionID = state.nextLocalActionID++;
       currentTask.results.forEach(res => {
-        if (!running.has(res.model)) state.optimisticClearedResults.set(res.model, { expires_at: expiresAt, base_result_key: resultStateKey(res) });
+        if (!running.has(res.model)) state.optimisticClearedResults.set(res.model, { expires_at: expiresAt, action_id: actionID, base_result_key: resultStateKey(res) });
       });
       state.task = { ...currentTask, results: keptResults };
       state.results = new Map(keptResults.map(res => [res.model, res]));
       renderModels();
       updateFavicon();
+      return actionID;
     }
     function canceledResultFor(model) {
       const res = resultFor(model) || {};
@@ -1882,14 +1942,21 @@ const indexHTML = `<!doctype html>
     }
     function optimisticStopProbes(models) {
       const expiresAt = localTrustExpiresAt();
+      const actionID = state.nextLocalActionID++;
       orderedModelNames([...new Set(models)]).forEach(model => {
         const result = canceledResultFor(model);
-        const entry = { time: result.updated_at, loop_count: activeLoopCountFor(model), expires_at: expiresAt, result };
+        const entry = { time: result.updated_at, loop_count: activeLoopCountFor(model), expires_at: expiresAt, action_id: actionID, result };
         state.optimisticStarts.delete(model);
         state.optimisticStops.set(model, entry);
         state.localStopLogs.set(model, entry);
       });
       applyTask(state.task || {});
+      return actionID;
+    }
+    function settleOptimisticEntries(entries, models, actionID) {
+      models.forEach(model => {
+        if (entries.get(model)?.action_id === actionID) entries.delete(model);
+      });
     }
     async function saveRuntime() {
       const cfg = { ...state.config };
@@ -2001,17 +2068,19 @@ const indexHTML = `<!doctype html>
       if (!models.length || state.editing) return;
       const previous = snapshotClientState();
       const loopCounts = loopCountsForModels(models, state.config.model_loop_counts || {});
-      optimisticStartProbe(models, loopCounts);
+      const actionID = optimisticStartProbe(models, loopCounts);
       setMessage('Starting ' + models.length + ' model(s)...');
       schedulePoll();
       try {
         const data = await request('/api/probe', { method: 'POST', body: JSON.stringify({ models, model_loop_counts: loopCounts }) });
         clearDirtyLoopCounts(models);
         if (data.config) state.config = mergeDirtyLoopCounts(data.config);
-        applyTask(data.task);
+        settleOptimisticEntries(state.optimisticStarts, models, actionID);
+        acceptServerTask(data.task);
         setMessage('Probe task started.');
         schedulePoll();
       } catch (err) {
+        settleOptimisticEntries(state.optimisticStarts, models, actionID);
         restoreClientState(previous);
         await pollState().catch(refreshErr => setMessage(refreshErr.message));
         throw err;
@@ -2022,16 +2091,20 @@ const indexHTML = `<!doctype html>
       models = orderedModelNames([...new Set(models)]).filter(model => state.runningModels.has(model));
       if (!models.length || state.editing) return;
       const previous = snapshotClientState();
-      optimisticStopProbes(models);
+      const actionID = optimisticStopProbes(models);
       const label = models.length === 1 ? models[0] : models.length + ' models';
       setMessage('Stopping ' + label + '...');
       schedulePoll();
       try {
         const data = await request('/api/probe/stop', { method: 'POST', body: JSON.stringify({ models }) });
-        applyTask(data.task);
-        setMessage('Stopping ' + label + '...');
+        settleOptimisticEntries(state.optimisticStops, models, actionID);
+        settleOptimisticEntries(state.localStopLogs, models, actionID);
+        acceptServerTask(data.task);
+        setMessage('Stopped ' + label + '.');
         schedulePoll();
       } catch (err) {
+        settleOptimisticEntries(state.optimisticStops, models, actionID);
+        settleOptimisticEntries(state.localStopLogs, models, actionID);
         restoreClientState(previous);
         await pollState().catch(refreshErr => setMessage(refreshErr.message));
         throw err;
@@ -2042,15 +2115,21 @@ const indexHTML = `<!doctype html>
     }
     async function clearResults() {
       const previous = snapshotClientState();
-      optimisticClearResults();
+      const actionID = optimisticClearResults();
       setMessage('Results cleared.');
       schedulePoll();
       try {
         const data = await request('/api/probe/results/clear', { method: 'POST', body: '{}' });
-        applyTask(data.task);
+        state.optimisticClearedResults.forEach((entry, model) => {
+          if (entry.action_id === actionID) state.optimisticClearedResults.delete(model);
+        });
+        acceptServerTask(data.task);
         setMessage('Results cleared.');
         schedulePoll();
       } catch (err) {
+        state.optimisticClearedResults.forEach((entry, model) => {
+          if (entry.action_id === actionID) state.optimisticClearedResults.delete(model);
+        });
         restoreClientState(previous);
         await pollState().catch(refreshErr => setMessage(refreshErr.message));
         throw err;
