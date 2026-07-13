@@ -584,7 +584,7 @@ const indexHTML = `<!doctype html>
   </main>
 
   <script>
-    const state = { config: null, task: {}, lastServerTask: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftGroups: [], draftModels: [], draftModelLoopCounts: {}, nextDraftGroupID: 1, dirtyLoopCounts: new Set(), editLockedModels: new Set(), collapsedGroups: new Set(), groupsCollapsedInitialized: false, dragModel: '', dragGroupID: '', optimisticStarts: new Map(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Map(), nextLocalActionID: 1, lastServerRevision: 0, successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), failureFaviconPrimed: false, backgroundSuccessFavicon: false, backgroundFailedFavicon: false, handledFailureFaviconKey: '', faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
+    const state = { config: null, task: {}, lastServerTask: {}, selected: new Set(), results: new Map(), running: false, runningModels: new Set(), logEntries: [], editing: false, draftGroups: [], draftModels: [], draftModelLoopCounts: {}, nextDraftGroupID: 1, dirtyLoopCounts: new Set(), editLockedModels: new Set(), collapsedGroups: new Set(), viewCollapsedBeforeEdit: new Set(), groupsCollapsedInitialized: false, dragModel: '', dragGroupID: '', dragExpandTimer: null, dragExpandGroupID: '', optimisticStarts: new Map(), optimisticStops: new Map(), localStopLogs: new Map(), optimisticClearedResults: new Map(), nextLocalActionID: 1, lastServerRevision: 0, successNotificationsPrimed: false, notifiedSuccessLogKeys: new Set(), failureFaviconPrimed: false, backgroundSuccessFavicon: false, backgroundFailedFavicon: false, handledFailureFaviconKey: '', faviconStatus: '', modelTableMode: '', modelRowOrder: [] };
     const maxLogEntries = 100;
     const idlePollMS = 60000;
     const runningPollMS = 5000;
@@ -649,7 +649,26 @@ const indexHTML = `<!doctype html>
       }));
       return models;
     }
-    function groupKey(index, group) { return String(index) + ':' + providerValue(group?.provider) + ':' + (group?.name || defaultGroupName()); }
+    function groupKey(index, group) {
+      if (group?._id) return 'edit:' + group._id;
+      return String(index) + ':' + providerValue(group?.provider) + ':' + (group?.name || defaultGroupName());
+    }
+    function draftCollapsedGroupsFromView(viewGroups, draftGroups, collapsedGroups) {
+      const collapsed = new Set();
+      draftGroups.forEach((draftGroup, index) => {
+        const viewGroup = viewGroups[index];
+        if (viewGroup && collapsedGroups.has(groupKey(index, viewGroup))) collapsed.add(groupKey(index, draftGroup));
+      });
+      return collapsed;
+    }
+    function viewCollapsedGroupsFromDraft(draftGroups, viewGroups, collapsedGroups) {
+      const collapsed = new Set();
+      draftGroups.forEach((draftGroup, index) => {
+        const viewGroup = viewGroups[index];
+        if (viewGroup && collapsedGroups.has(groupKey(index, draftGroup))) collapsed.add(groupKey(index, viewGroup));
+      });
+      return collapsed;
+    }
     function newDraftGroupID() { return 'group-' + state.nextDraftGroupID++; }
     function ensureDraftGroupIDs() {
       state.draftGroups.forEach(group => {
@@ -1349,6 +1368,7 @@ const indexHTML = `<!doctype html>
     function installDropTarget(tbody) {
       tbody.addEventListener('dragover', event => {
         if (!state.dragModel) return;
+        cancelDragExpand();
         event.preventDefault();
         event.stopPropagation();
         event.dataTransfer.dropEffect = 'move';
@@ -1401,9 +1421,39 @@ const indexHTML = `<!doctype html>
       const lastRect = unanimatedRowRect(rows[rows.length - 1]);
       return clientY >= lastRect.top + lastRect.height / 2;
     }
+    function cancelDragExpand(groupID = '') {
+      if (groupID && state.dragExpandGroupID !== groupID) return;
+      clearTimeout(state.dragExpandTimer);
+      state.dragExpandTimer = null;
+      state.dragExpandGroupID = '';
+    }
+    function scheduleDragExpand(section) {
+      if (!state.dragModel) return;
+      const groupIndex = Number(section.dataset.editGroup || 0);
+      const group = state.draftGroups[groupIndex];
+      if (!group || !state.collapsedGroups.has(groupKey(groupIndex, group))) {
+        cancelDragExpand();
+        return;
+      }
+      if (state.dragExpandTimer && state.dragExpandGroupID === group._id) return;
+      cancelDragExpand();
+      state.dragExpandGroupID = group._id;
+      state.dragExpandTimer = setTimeout(() => {
+        const groupID = state.dragExpandGroupID;
+        state.dragExpandTimer = null;
+        state.dragExpandGroupID = '';
+        if (!state.editing || !state.dragModel) return;
+        const currentIndex = state.draftGroups.findIndex(candidate => candidate._id === groupID);
+        const currentGroup = state.draftGroups[currentIndex];
+        if (!currentGroup) return;
+        state.collapsedGroups.delete(groupKey(currentIndex, currentGroup));
+        renderModels();
+      }, 600);
+    }
     function installGroupDropTarget(section) {
       section.addEventListener('dragover', event => {
         if (!state.dragModel || event.target.closest('[data-model-row]')) return;
+        scheduleDragExpand(section);
         event.preventDefault();
         event.dataTransfer.dropEffect = 'move';
         if (!isGroupEndDropArea(section, event.clientY)) {
@@ -1418,7 +1468,10 @@ const indexHTML = `<!doctype html>
         if (moveDraftModelTo(state.dragModel, groupIndex, targetIndex)) renderModelsAnimated();
       });
       section.addEventListener('dragleave', event => {
-        if (!section.contains(event.relatedTarget)) section.classList.remove('drop-target');
+        if (!section.contains(event.relatedTarget)) {
+          section.classList.remove('drop-target');
+          cancelDragExpand(section.dataset.editGroupId || '');
+        }
       });
       section.addEventListener('drop', event => {
         event.preventDefault();
@@ -1457,6 +1510,7 @@ const indexHTML = `<!doctype html>
       handle.addEventListener('dragend', cleanupDragState);
     }
     function cleanupDragState() {
+      cancelDragExpand();
       state.dragModel = '';
       state.dragGroupID = '';
       document.querySelectorAll('.dragging').forEach(row => row.classList.remove('dragging'));
@@ -2056,10 +2110,13 @@ const indexHTML = `<!doctype html>
     async function toggleModelEdit() {
       if (!state.config) return;
       if (!state.editing) {
+        const viewGroups = configGroups(state.config);
+        state.viewCollapsedBeforeEdit = new Set(state.collapsedGroups);
         state.editing = true;
         state.nextDraftGroupID = 1;
-        state.draftGroups = configGroups(state.config).map(group => ({ _id: newDraftGroupID(), name: group.name, provider: providerValue(group.provider), models: [...group.models] }));
+        state.draftGroups = viewGroups.map(group => ({ _id: newDraftGroupID(), name: group.name, provider: providerValue(group.provider), models: [...group.models] }));
         if (!state.draftGroups.length) state.draftGroups = [{ _id: newDraftGroupID(), name: defaultGroupName(), provider: providerValue(''), models: [] }];
+        state.collapsedGroups = draftCollapsedGroupsFromView(viewGroups, state.draftGroups, state.viewCollapsedBeforeEdit);
         state.draftModels = flattenGroups(state.draftGroups);
         state.draftModelLoopCounts = loopCountsForModels(state.draftModels, state.config.model_loop_counts || {});
         state.editLockedModels = new Set(state.runningModels);
@@ -2068,12 +2125,13 @@ const indexHTML = `<!doctype html>
         setMessage('Editing models.');
         return;
       }
-      const groups = state.draftGroups
-        .map(group => ({ name: (group.name || defaultGroupName()).trim() || defaultGroupName(), provider: providerValue(group.provider), models: [...group.models] }))
-        .filter(group => group.models.length > 0);
+      const savedDraftGroups = state.draftGroups.filter(group => group.models.length > 0);
+      const groups = savedDraftGroups.map(group => ({ name: (group.name || defaultGroupName()).trim() || defaultGroupName(), provider: providerValue(group.provider), models: [...group.models] }));
       const models = flattenGroups(groups);
       state.config = await request('/api/config', { method: 'POST', body: JSON.stringify({ ...state.config, model_groups: groups, models, model_loop_counts: loopCountsForModels(models, state.draftModelLoopCounts) }) });
       clearDirtyLoopCounts();
+      state.collapsedGroups = viewCollapsedGroupsFromDraft(savedDraftGroups, configGroups(state.config), state.collapsedGroups);
+      state.viewCollapsedBeforeEdit = new Set();
       state.editing = false;
       state.draftGroups = [];
       state.draftModels = [];
@@ -2087,6 +2145,8 @@ const indexHTML = `<!doctype html>
     }
     function cancelModelEdit() {
       if (!state.editing) return;
+      state.collapsedGroups = new Set(state.viewCollapsedBeforeEdit);
+      state.viewCollapsedBeforeEdit = new Set();
       state.editing = false;
       state.draftGroups = [];
       state.draftModels = [];
