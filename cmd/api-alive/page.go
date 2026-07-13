@@ -1191,6 +1191,7 @@ const indexHTML = `<!doctype html>
         rememberModelTable('edit', models);
       }
       const host = $('modelGroups');
+      installModelEditorDragSurface(host);
       const keep = new Set(groups.map(group => group._id));
       [...host.querySelectorAll('[data-edit-group-id]')].forEach(section => {
         if (!keep.has(section.dataset.editGroupId)) section.remove();
@@ -1363,6 +1364,20 @@ const indexHTML = `<!doctype html>
         cleanupDragState();
       });
     }
+    function installModelEditorDragSurface(host) {
+      if (host.dataset.dragSurfaceInstalled === 'true') return;
+      host.dataset.dragSurfaceInstalled = 'true';
+      host.addEventListener('dragover', event => {
+        if (!state.dragModel && !state.dragGroupID) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+      }, { capture: true });
+      host.addEventListener('drop', event => {
+        if (!state.dragModel && !state.dragGroupID) return;
+        event.preventDefault();
+        cleanupDragState();
+      });
+    }
     function isGroupEndDropArea(section, clientY) {
       const headerRect = section.querySelector('.model-group-header').getBoundingClientRect();
       if (clientY >= headerRect.top && clientY <= headerRect.bottom) return true;
@@ -1374,13 +1389,16 @@ const indexHTML = `<!doctype html>
     function installGroupDropTarget(section) {
       section.addEventListener('dragover', event => {
         if (!state.dragModel || event.target.closest('[data-model-row]')) return;
-        if (!isGroupEndDropArea(section, event.clientY)) return;
         event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        if (!isGroupEndDropArea(section, event.clientY)) {
+          section.classList.remove('drop-target');
+          return;
+        }
         const groupIndex = Number(section.dataset.editGroup || 0);
         const group = state.draftGroups[groupIndex];
         if (!group) return;
         section.classList.add('drop-target');
-        event.dataTransfer.dropEffect = 'move';
         const targetIndex = group.models.filter(model => model !== state.dragModel).length;
         if (moveDraftModelTo(state.dragModel, groupIndex, targetIndex)) renderModelsAnimated();
       });
