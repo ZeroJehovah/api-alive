@@ -1378,6 +1378,21 @@ const indexHTML = `<!doctype html>
         cleanupDragState();
       });
     }
+    function keepActiveEditorDragAllowed(event) {
+      if (!state.editing || (!state.dragModel && !state.dragGroupID)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    }
+    function finishActiveEditorDrag(event) {
+      if (!state.dragModel && !state.dragGroupID) return;
+      event.preventDefault();
+      cleanupDragState();
+    }
+    function installEditorDragGuard() {
+      document.addEventListener('dragenter', keepActiveEditorDragAllowed, { capture: true });
+      document.addEventListener('dragover', keepActiveEditorDragAllowed, { capture: true });
+      document.addEventListener('drop', finishActiveEditorDrag, { capture: true });
+    }
     function isGroupEndDropArea(section, clientY) {
       const headerRect = section.querySelector('.model-group-header').getBoundingClientRect();
       if (clientY >= headerRect.top && clientY <= headerRect.bottom) return true;
@@ -2172,6 +2187,7 @@ const indexHTML = `<!doctype html>
     renderRunningModels();
     updateFavicon();
     updateNotificationButton();
+    installEditorDragGuard();
     installNotificationPermissionPrompt();
     loadState().catch(err => setMessage(err.message));
   </script>
