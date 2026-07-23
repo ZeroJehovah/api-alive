@@ -528,6 +528,9 @@ const indexHTML = `<!doctype html>
           <label>Max output chars
             <input id="maxOutputChars" type="number" min="1" step="1">
           </label>
+          <label>Access token
+            <input id="accessToken" type="text" autocomplete="off" spellcheck="false">
+          </label>
         </div>
       </aside>
 
@@ -601,6 +604,23 @@ const indexHTML = `<!doctype html>
     const $ = (id) => document.getElementById(id);
 
     function setMessage(text) { $('message').textContent = text; }
+    function accessToken() {
+      const queryToken = new URLSearchParams(window.location.search).get('token');
+      if (queryToken) {
+        try { sessionStorage.setItem('apiAliveToken', queryToken); } catch (err) { /* storage may be unavailable */ }
+        return queryToken;
+      }
+      try { return sessionStorage.getItem('apiAliveToken') || ''; } catch (err) { return ''; }
+    }
+    function setAccessToken(token) {
+      token = String(token || '').trim();
+      if (!token) return;
+      try { sessionStorage.setItem('apiAliveToken', token); } catch (err) { /* storage may be unavailable */ }
+      const url = new URL(window.location.href);
+      url.searchParams.set('token', token);
+      window.history.replaceState(null, '', url.toString());
+      closeTaskStream();
+    }
     function resultFor(model) { return state.results.get(model) || null; }
     function escapeText(value) {
       return String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
@@ -895,7 +915,7 @@ const indexHTML = `<!doctype html>
     }
     function connectTaskStream() {
       if (taskEventSource || !state.config || !('EventSource' in window)) return;
-      taskEventSource = new EventSource('/api/events');
+      taskEventSource = new EventSource('/api/events?token=' + encodeURIComponent(accessToken()));
       taskEventSource.onmessage = event => {
         if (!event.data) return;
         try {
@@ -1766,6 +1786,7 @@ const indexHTML = `<!doctype html>
       $('listenAddr').value = config.listen_addr || '0.0.0.0:8080';
       $('timeoutSeconds').value = config.timeout_seconds || 120;
       $('maxOutputChars').value = config.max_output_chars || 4000;
+      $('accessToken').value = config.token || '';
     }
     function applyTask(task) {
       pruneLocalTrust();
@@ -1843,7 +1864,11 @@ const indexHTML = `<!doctype html>
       schedulePoll();
     }
     async function request(path, options = {}) {
-      const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
+      const headers = new Headers(options.headers || {});
+      headers.set('Content-Type', 'application/json');
+      const token = accessToken();
+      if (token) headers.set('Authorization', 'Bearer ' + token);
+      const res = await fetch(path, { ...options, headers });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
       return data;
@@ -2062,7 +2087,10 @@ const indexHTML = `<!doctype html>
       cfg.timeout_seconds = Number($('timeoutSeconds').value) || 120;
       cfg.model_loop_counts = loopCountsForModels(cfg.models || [], cfg.model_loop_counts || {});
       cfg.max_output_chars = Number($('maxOutputChars').value) || 4000;
+      cfg.token = $('accessToken').value.trim();
       state.config = await request('/api/config', { method: 'POST', body: JSON.stringify(cfg) });
+      setAccessToken(state.config.token);
+      connectTaskStream();
       clearDirtyLoopCounts();
       fillForm(state.config);
       renderModels();
@@ -2135,6 +2163,8 @@ const indexHTML = `<!doctype html>
       const groups = savedDraftGroups.map(group => ({ name: (group.name || defaultGroupName()).trim() || defaultGroupName(), provider: providerValue(group.provider), models: [...group.models] }));
       const models = flattenGroups(groups);
       state.config = await request('/api/config', { method: 'POST', body: JSON.stringify({ ...state.config, model_groups: groups, models, model_loop_counts: loopCountsForModels(models, state.draftModelLoopCounts) }) });
+      setAccessToken(state.config.token);
+      connectTaskStream();
       clearDirtyLoopCounts();
       state.collapsedGroups = viewCollapsedGroupsFromDraft(savedDraftGroups, configGroups(state.config), state.collapsedGroups);
       state.viewCollapsedBeforeEdit = new Set();

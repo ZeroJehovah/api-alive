@@ -1,6 +1,8 @@
 package alive
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -20,6 +22,7 @@ type Config struct {
 	ClaudeCommand  string `json:"claude_command"`
 	ListenAddr     string `json:"listen_addr"`
 	MaxOutputChars int    `json:"max_output_chars"`
+	Token          string `json:"token"`
 }
 
 type ModelGroup struct {
@@ -41,22 +44,29 @@ func DefaultConfig() Config {
 		ClaudeCommand:  "claude",
 		ListenAddr:     "0.0.0.0:8080",
 		MaxOutputChars: 4000,
+		Token:          newAccessToken(),
 	}
 }
 
 func LoadConfig(path string) (Config, error) {
-	cfg := DefaultConfig()
 	if path == "" {
-		return cfg, nil
+		return DefaultConfig(), nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return cfg, err
+		return Config{}, err
 	}
+	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return cfg, err
 	}
+	needsTokenPersist := strings.TrimSpace(cfg.Token) == ""
 	cfg.ApplyDefaults()
+	if needsTokenPersist {
+		if err := SaveConfig(path, cfg); err != nil {
+			return cfg, err
+		}
+	}
 	return cfg, nil
 }
 
@@ -87,10 +97,21 @@ func (c *Config) ApplyDefaults() {
 	if c.MaxOutputChars <= 0 {
 		c.MaxOutputChars = 4000
 	}
+	if strings.TrimSpace(c.Token) == "" {
+		c.Token = newAccessToken()
+	}
 	c.ModelGroups = normalizeModelGroups(c.ModelGroups, c.Models, c.Provider)
 	c.Models = flattenModelGroups(c.ModelGroups)
 	c.ModelLoopCounts = normalizeModelLoopCounts(c.Models, c.ModelLoopCounts, c.LoopCount)
 	c.LoopCount = 0
+}
+
+func newAccessToken() string {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(bytes)
 }
 
 func (c Config) Validate() error {

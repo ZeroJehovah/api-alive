@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,6 +44,7 @@ type configRequest struct {
 	ClaudeCommand   string             `json:"claude_command"`
 	MaxOutputChars  int                `json:"max_output_chars"`
 	ListenAddr      string             `json:"listen_addr"`
+	Token           *string            `json:"token"`
 }
 
 type modelsRequest struct {
@@ -138,12 +141,42 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "listen:", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "api-alive listening on http://%s\n", listener.Addr().String())
-	if err := http.Serve(listener, srv.mux); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	fmt.Fprintf(stdout, "api-alive listening on http://%s/?token=%s\n", listener.Addr().String(), url.QueryEscape(cfg.Token))
+	if err := http.Serve(listener, srv.handler()); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Print(err)
 		return 1
 	}
 	return 0
+}
+
+func (s *server) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cfg, err := s.loadConfig()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		token := requestToken(r)
+		if token == "" || cfg.Token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(cfg.Token)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="api-alive"`)
+			writeError(w, http.StatusUnauthorized, "valid token required")
+			return
+		}
+		s.mux.ServeHTTP(w, r)
+	})
+}
+
+func requestToken(r *http.Request) string {
+	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
+	if len(authorization) >= 7 && strings.EqualFold(authorization[:7], "bearer ") {
+		if token := strings.TrimSpace(authorization[7:]); token != "" {
+			return token
+		}
+	}
+	if token := strings.TrimSpace(r.Header.Get("X-API-Token")); token != "" {
+		return token
+	}
+	return strings.TrimSpace(r.URL.Query().Get("token"))
 }
 
 func newServer(configPath string) *server {
@@ -204,6 +237,9 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	cfg.ClaudeCommand = strings.TrimSpace(req.ClaudeCommand)
 	cfg.MaxOutputChars = req.MaxOutputChars
 	cfg.ListenAddr = strings.TrimSpace(req.ListenAddr)
+	if req.Token != nil {
+		cfg.Token = strings.TrimSpace(*req.Token)
+	}
 	cfg.ApplyDefaults()
 	if err := cfg.ValidateProviders(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
