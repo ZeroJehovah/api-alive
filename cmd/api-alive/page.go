@@ -987,9 +987,15 @@ const indexHTML = `<!doctype html>
     function stoppableModels() {
       return orderedModelNames([...state.runningModels]).filter(model => state.runningModels.has(model));
     }
+    function terminalResultAvailable(model, res) {
+      if (!res?.updated_at) return false;
+      if (res.success || isCanceledResult(res)) return true;
+      const loopCount = activeLoopCountFor(model);
+      return loopCount > 0 && displayAttemptNumber(res.attempts) >= loopCount;
+    }
     function statusPill(model) {
-      if (state.runningModels.has(model)) return '<span class="pill run"><span class="live-dot"></span>Running</span>';
       const res = resultFor(model);
+      if (state.runningModels.has(model) && !terminalResultAvailable(model, res)) return '<span class="pill run"><span class="live-dot"></span>Running</span>';
       if (!res) return '<span class="pill">Idle</span>';
       if (res.success) return '<span class="pill ok">Success (' + escapeText(displaySeconds(res.duration_ms)) + 's)</span>';
       return '<span class="pill bad">' + (isCanceledResult(res) ? 'Canceled' : 'Failed') + '</span>';
@@ -1550,11 +1556,11 @@ const indexHTML = `<!doctype html>
     function groupResultStats(group) {
       const stats = { success: 0, failed: 0, running: 0 };
       (group.models || []).forEach(model => {
-        if (state.runningModels.has(model)) {
+        const res = resultFor(model);
+        if (state.runningModels.has(model) && !terminalResultAvailable(model, res)) {
           stats.running++;
           return;
         }
-        const res = resultFor(model);
         if (!res) return;
         if (res.success) stats.success++;
         else if (res.success === false) stats.failed++;
