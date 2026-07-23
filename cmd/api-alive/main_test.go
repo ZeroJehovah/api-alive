@@ -147,6 +147,8 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`function runnableSelectedModels`,
 		`function hasClearableResults`,
 		`function stoppableModels`,
+		`function terminalResultAvailable`,
+		`state.runningModels.has(model) && !terminalResultAvailable(model, res)`,
 		`$('clearResultsBtn').disabled = state.editing || !hasClearableResults();`,
 		`$('stopAllBtn').disabled = state.editing || stoppableModels().length === 0;`,
 		`return [...state.selected].filter(model => model);`,
