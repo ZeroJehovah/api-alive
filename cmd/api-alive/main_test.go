@@ -34,6 +34,10 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`function activeLoopCountFor`,
 		`function displayProgress`,
 		`function displaySeconds`,
+		`function accessToken`,
+		`Authorization', 'Bearer ' + token`,
+		`new EventSource('/api/events?token='`,
+		`id="accessToken"`,
 		`Success (' + escapeText(displaySeconds(res.duration_ms)) + 's)`,
 		`const status = res.success ? 'success' : (isCanceledResult(res) ? 'canceled' : 'failed');`,
 		`return '<span class="pill bad">' + (isCanceledResult(res) ? 'Canceled' : 'Failed') + '</span>';`,
@@ -42,7 +46,7 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`runningPollMS = 5000`,
 		`let taskEventSource = null`,
 		`function connectTaskStream`,
-		`new EventSource('/api/events')`,
+		`new EventSource('/api/events?token=' + encodeURIComponent(accessToken()))`,
 		`acceptServerTask(JSON.parse(event.data) || {})`,
 		`lastServerTask: {}`,
 		`lastServerRevision: 0`,
@@ -398,6 +402,76 @@ func TestStateCreatesDefaultConfig(t *testing.T) {
 	}
 	if state.Config.ListenAddr != "0.0.0.0:8080" {
 		t.Fatalf("listen addr = %q", state.Config.ListenAddr)
+	}
+	if state.Config.Token == "" {
+		t.Fatal("default config token is empty")
+	}
+}
+
+func TestServerRequiresTokenForPageAndAPI(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	srv := newServer(configPath)
+	cfg, err := srv.loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{"/", "/api/state"} {
+		rec := httptest.NewRecorder()
+		srv.handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("unauthorized %s status = %d, want %d", path, rec.Code, http.StatusUnauthorized)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	rec := httptest.NewRecorder()
+	srv.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("authorized API status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/?token="+cfg.Token, nil)
+	rec = httptest.NewRecorder()
+	srv.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("authorized page status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConfigEndpointRotatesAccessToken(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	srv := newServer(configPath)
+	cfg, err := srv.loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newToken := "replacement-access-token"
+	body := strings.NewReader(`{"token":"` + newToken + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/config", body)
+	req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	rec := httptest.NewRecorder()
+	srv.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rotate token status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+
+	oldReq := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	oldReq.Header.Set("Authorization", "Bearer "+cfg.Token)
+	rec = httptest.NewRecorder()
+	srv.handler().ServeHTTP(rec, oldReq)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("old token status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	newReq := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	newReq.Header.Set("Authorization", "Bearer "+newToken)
+	rec = httptest.NewRecorder()
+	srv.handler().ServeHTTP(rec, newReq)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("new token status = %d, body = %q", rec.Code, rec.Body.String())
 	}
 }
 

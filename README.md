@@ -26,13 +26,19 @@ GOOS=linux GOARCH=arm64 go build -o dist/api-alive-linux-arm64 ./cmd/api-alive
 ./bin/api-alive --config config.json
 ```
 
-打开 Web 页面：
+启动日志会输出包含访问 token 的 Web 地址，例如：
 
 ```text
-http://<vps-ip>:8080
+http://<vps-ip>:8080/?token=<generated-token>
 ```
 
-默认监听地址是 `0.0.0.0:8080`。如果对公网开放，建议先通过防火墙、反向代理或访问控制限制入口。
+Web 页面和所有 HTTP API 都必须携带配置中的 token。浏览器会在通过上述地址进入后为 Fetch 和 SSE 请求自动附带 token；API 客户端可以使用 Bearer token：
+
+```sh
+curl -H 'Authorization: Bearer <token>' http://<vps-ip>:8080/api/state
+```
+
+默认监听地址是 `0.0.0.0:8080`。如果对公网开放，仍建议使用 HTTPS，并通过防火墙或反向代理限制入口。
 
 ## Web 页面能力
 
@@ -60,7 +66,8 @@ http://<vps-ip>:8080
   "codex_command": "codex",
   "claude_command": "claude",
   "listen_addr": "0.0.0.0:8080",
-  "max_output_chars": 4000
+  "max_output_chars": 4000,
+  "token": "<generated-token>"
 }
 ```
 
@@ -74,6 +81,7 @@ http://<vps-ip>:8080
 - `claude_command`：VPS 上用于调用 Claude Code 的命令。
 - `listen_addr`：Web 服务监听地址。
 - `max_output_chars`：单个测活结果最多返回的输出字符数。
+- `token`：Web 页面和所有 HTTP API 的访问凭证；首次启动或迁移旧配置时自动生成，可在 Runtime 面板更新。
 
 ## 测活逻辑
 

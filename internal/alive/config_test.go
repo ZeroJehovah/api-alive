@@ -1,9 +1,41 @@
 package alive
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestLoadConfigMigratesMissingToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"models":["model-a"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Token) < 32 {
+		t.Fatalf("generated token length = %d", len(cfg.Token))
+	}
+	reloaded, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Token != cfg.Token {
+		t.Fatal("migrated token changed on reload")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"token"`) {
+		t.Fatal("migrated config does not persist token")
+	}
+}
 
 func TestAddModelsAppendsUniqueTrimmedModels(t *testing.T) {
 	got := AddModels([]string{" gpt-5 ", "gpt-5"}, []string{"gpt-5-mini", "", " gpt-5 "})
