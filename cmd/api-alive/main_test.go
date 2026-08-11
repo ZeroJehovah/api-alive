@@ -229,6 +229,8 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`data-bwignore="true"`,
 		`data-form-type="other"`,
 		`<select class="attempt-limit-select"`,
+		`.attempt-limit-select { width: 72px; min-width: 72px;`,
+		`.attempt-limit { width: 86px; }`,
 		`data-attempt-limit`,
 		`const loopCountChoices = [0, 1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 99]`,
 		`function normalizeLoopCountChoice`,

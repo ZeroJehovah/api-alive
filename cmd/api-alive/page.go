@@ -191,14 +191,14 @@ const indexHTML = `<!doctype html>
     .model-table th.check, .model-table td.check { padding-left: 0; padding-right: 0; text-align: center; }
     .model-table input[type="checkbox"] { width: 16px; height: 16px; min-height: 16px; padding: 0; margin: 0 auto; display: block; }
     .model-table button.table-action { min-height: 24px; padding: 0 7px; }
-    .attempt-limit-select { width: 62px; min-width: 62px; min-height: 24px; padding: 0 22px 0 10px; text-align: left; text-align-last: left; font-size: 12px; background: #fff; }
+    .attempt-limit-select { width: 72px; min-width: 72px; min-height: 24px; padding: 0 22px 0 8px; text-align: left; text-align-last: left; font-size: 12px; background: #fff; }
     .model-editor .model-heading { width: auto; }
     .editor-actions { width: 76px; }
     .check { width: 34px; }
     .drag { width: 42px; }
     .result { width: 118px; }
     .progress { width: 78px; }
-    .attempt-limit { width: 76px; }
+    .attempt-limit { width: 86px; }
     .result-time { width: 154px; }
     .row-actions { width: 108px; }
     .row-action-group { display: flex; gap: 4px; align-items: center; }
