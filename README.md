@@ -1,8 +1,8 @@
 # api-alive
 
-`api-alive` 是一个部署在 VPS 上的 CLI 模型测活 Web 服务。它运行在 Ubuntu 上，调用本机安装的 `codex` 或 `claude` 命令，并行探测一个或多个配置模型的可用性。
+`api-alive` 是一个部署在 VPS 上的模型测活 Web 服务。Codex 分组直接复放真实 `codex-tui` 的 Responses HTTP 请求，Claude 分组直接复放真实 Claude Code 的 Messages HTTP 请求，并行探测一个或多个配置模型的可用性。
 
-当前目标部署环境是 ARM CPU 的 Ubuntu 24 VPS，并假设 VPS 上已经安装且可直接执行所选 provider 对应的 CLI。
+当前目标部署环境是 ARM CPU 的 Ubuntu 24 VPS。两组测活都只需要可读取的本机登录凭据；`codex` 和 `claude` 命令仅用于刷新 User-Agent 中的版本缓存。
 
 ## 构建
 
@@ -52,6 +52,8 @@ curl -H 'Authorization: Bearer <token>' http://<vps-ip>:8080/api/state
 
 首次启动时，服务会在指定路径自动创建配置文件。后续配置通过 Web 页面修改，不需要手动编辑 `config.json`。
 
+旧版配置中的 `codex_base_url` 和 `claude_base_url` 会在加载时自动迁移为统一的 `base_url`，缺失的 `batch_min_interval_seconds` 会补为默认值 `5`，迁移结果会立即写回配置文件。
+
 示例：
 
 ```json
@@ -63,8 +65,8 @@ curl -H 'Authorization: Bearer <token>' http://<vps-ip>:8080/api/state
   ],
   "model_loop_counts": {"gpt-5": 1, "sonnet": 1},
   "timeout_seconds": 120,
-  "codex_command": "codex",
-  "claude_command": "claude",
+  "base_url": "https://cpa.example.com",
+  "batch_min_interval_seconds": 5,
   "listen_addr": "0.0.0.0:8080",
   "max_output_chars": 4000,
   "token": "<generated-token>"
@@ -77,26 +79,30 @@ curl -H 'Authorization: Bearer <token>' http://<vps-ip>:8080/api/state
 - `model_groups`：模型分组；每个分组通过 `provider` 指定使用 `codex` 或 `claude`，Run selected 可以跨 provider 分组并行测活。
 - `model_loop_counts`：每个模型的最大尝试次数；新增模型默认是 1，可在 Models 面板修改；任一尝试成功后立即停止该模型后续尝试。
 - `timeout_seconds`：单次尝试的超时时间。
-- `codex_command`：VPS 上用于调用 Codex 的命令。
-- `claude_command`：VPS 上用于调用 Claude Code 的命令。
+- `base_url`：Codex 和 Claude 共用的 API 基础地址；Codex 请求 `/v1/responses`，Claude 请求 `/v1/messages?beta=true`。默认值为 `https://cpa.aiof.top`。
+- `batch_min_interval_seconds`：同一模型测试次数大于 1 时，该模型两次请求开始时间之间的最小间隔秒数。例如设为 `5`，前一次请求 2 秒后返回，下一次会再等待 3 秒；多个模型各自独立计时，测试次数为 1 的模型不等待。默认值为 `5`，设为 `0` 可关闭。
 - `listen_addr`：Web 服务监听地址。
 - `max_output_chars`：单个测活结果最多返回的输出字符数。
 - `token`：Web 页面和所有 HTTP API 的访问凭证；首次启动或迁移旧配置时自动生成，可在 Runtime 面板更新。
 
 ## 测活逻辑
 
-每个被选中的模型都会在独立临时目录中运行，并按所属模型分组的 provider 选择 CLI。Codex 分组的命令形态为：
+每个被选中的模型会按所属模型分组的 provider 选择测活方式。Codex 分组不启动 `codex`、`codex exec` 或 `codex app-server`，而是把一次真实 `codex-tui` 捕获到的 `/v1/responses` 请求作为模板，替换模型、当前提示语、认证信息和本次会话 ID 后直接发送：
 
-```sh
-codex exec --model <model> --skip-git-repo-check --ephemeral <prompt>
+```text
+POST <base_url>/v1/responses
 ```
 
-Claude 分组的命令形态为：
+模板保留真实客户端的 developer instructions、AGENTS.md 上下文、工具定义、请求参数以及 `Originator`、`User-Agent`、turn metadata 等请求头，以减少与 `codex-tui` 实际调用之间的差异。`User-Agent` 中的 Codex 版本通过 `codex --version` 获取，并缓存到 `~/.cache/api-alive/codex-version.json`，同时记录 `updated_at`；缓存超过一天时重新获取，获取失败则沿用上一次缓存的版本。没有可用缓存且命令执行失败时回退到抓包时的 `0.163.0`。认证优先读取 `CODEX_AUTH_FILE`，否则读取 `$CODEX_HOME/auth.json` 或 `~/.codex/auth.json` 中的 `OPENAI_API_KEY` 或 `tokens.access_token`。
 
-```sh
-claude --model <model> --print --no-session-persistence <prompt>
+Claude 分组不启动 `claude` 或 `claude --print`，而是把一次真实 Claude Code `2.1.301` 捕获到的请求作为模板：
+
+```text
+POST <base_url>/v1/messages?beta=true
 ```
 
-只有当所选 CLI 命令成功退出，并且输出中包含所选内置短提示语的预期答案时，测活才算成功。
+模板保留完整的 system 指令、CLAUDE.md/环境上下文、23 个工具定义、thinking/effort 等参数，以及 Claude Code 的 Stainless、Anthropic 和 session headers。每次请求会替换模型、提示语、会话 ID、设备 ID 和 Claude 版本。认证优先读取 `ANTHROPIC_AUTH_TOKEN` 或 `ANTHROPIC_API_KEY`，否则读取 `$CLAUDE_CONFIG_DIR/settings.json` 或 `~/.claude/settings.json` 的 `env`。设备 ID 从 `~/.claude.json` 的 `userID` 读取。Claude 版本通过 `claude --version` 获取并缓存到 `~/.cache/api-alive/claude-version.json`，刷新和失败回退规则与 Codex 相同。
 
-失败包括命令执行失败、超时和输出不符合预期。命令执行失败时，错误信息优先取 CLI 输出里的最后一条 `ERROR:` 行，其次取最后一行输出，最后才使用进程错误。
+只有请求成功，并且输出中包含所选内置短提示语的预期答案时，测活才算成功。
+
+失败包括 HTTP/SSE 错误、超时和输出不符合预期。直接 HTTP 请求不经过 Codex 或 Claude 客户端自身的重试配置；首个非 2xx 响应或 SSE 错误会立即写入测活结果并推送到页面，不必等到超时。若上游不返回错误也不结束响应，超时信息仍会保留首条及最后一条已收到的上游错误。

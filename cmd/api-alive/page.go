@@ -526,17 +526,17 @@ const indexHTML = `<!doctype html>
           </div>
         </header>
         <div class="body settings">
-          <label>Codex command
-            <input id="codexCommand" placeholder="codex">
-          </label>
-          <label>Claude command
-            <input id="claudeCommand" placeholder="claude">
+          <label>Base URL
+            <input id="baseURL" placeholder="https://cpa.example.com">
           </label>
           <label>Listen address
             <input id="listenAddr" placeholder="0.0.0.0:8080">
           </label>
           <label>Timeout seconds
             <input id="timeoutSeconds" type="number" min="1" step="1">
+          </label>
+          <label>Per-model min interval (seconds)
+            <input id="batchMinIntervalSeconds" type="number" min="0" step="1">
           </label>
           <label>Max output chars
             <input id="maxOutputChars" type="number" min="1" step="1">
@@ -1794,10 +1794,10 @@ const indexHTML = `<!doctype html>
       updateFavicon();
     }
     function fillForm(config) {
-      $('codexCommand').value = config.codex_command || 'codex';
-      $('claudeCommand').value = config.claude_command || 'claude';
+      $('baseURL').value = config.base_url || '';
       $('listenAddr').value = config.listen_addr || '0.0.0.0:8080';
       $('timeoutSeconds').value = config.timeout_seconds || 120;
+      $('batchMinIntervalSeconds').value = config.batch_min_interval_seconds ?? 5;
       $('maxOutputChars').value = config.max_output_chars || 4000;
       $('accessToken').value = config.token || '';
     }
@@ -2094,10 +2094,10 @@ const indexHTML = `<!doctype html>
       cfg.model_groups = configGroups(cfg);
       cfg.models = flattenGroups(cfg.model_groups);
       delete cfg.provider;
-      cfg.codex_command = $('codexCommand').value.trim() || 'codex';
-      cfg.claude_command = $('claudeCommand').value.trim() || 'claude';
+      cfg.base_url = $('baseURL').value.trim();
       cfg.listen_addr = $('listenAddr').value.trim() || '0.0.0.0:8080';
       cfg.timeout_seconds = Number($('timeoutSeconds').value) || 120;
+      cfg.batch_min_interval_seconds = Math.max(0, Number($('batchMinIntervalSeconds').value) || 0);
       cfg.model_loop_counts = loopCountsForModels(cfg.models || [], cfg.model_loop_counts || {});
       cfg.max_output_chars = Number($('maxOutputChars').value) || 4000;
       cfg.token = $('accessToken').value.trim();

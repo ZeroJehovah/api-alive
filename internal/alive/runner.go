@@ -41,9 +41,9 @@ type Event struct {
 }
 
 const (
-	EventAttempt          = "attempt"
-	EventResult           = "result"
-	defaultAttemptSpacing = 5 * time.Second
+	EventAttemptProgress = "attempt_progress"
+	EventAttempt         = "attempt"
+	EventResult          = "result"
 )
 
 func (r Runner) Run(ctx context.Context) (<-chan Result, error) {
@@ -134,7 +134,9 @@ func (r Runner) runModelEvents(parent context.Context, model string, rng *rand.R
 			}
 		}
 		prompt := r.Prompts[rng.Intn(len(r.Prompts))]
-		res = r.runAttempt(parent, model, prompt, tmp, attempt)
+		res = r.runAttempt(parent, model, prompt, tmp, attempt, func(progress Result) {
+			events <- Event{Type: EventAttemptProgress, Result: progress}
+		})
 		attemptResults = append(attemptResults, res)
 		events <- Event{Type: EventAttempt, Result: res}
 		if res.Success {
@@ -151,7 +153,7 @@ func (r Runner) runModelEvents(parent context.Context, model string, rng *rand.R
 	return res
 }
 
-func (r Runner) runAttempt(parent context.Context, model string, prompt PromptCase, tmp string, attempt int) Result {
+func (r Runner) runAttempt(parent context.Context, model string, prompt PromptCase, tmp string, attempt int, emitProgress func(Result)) Result {
 	started := time.Now()
 	res := Result{
 		Model:          model,
@@ -161,25 +163,38 @@ func (r Runner) runAttempt(parent context.Context, model string, prompt PromptCa
 		Expected:       prompt.Expected,
 	}
 
-	command := r.shellCommand(model, prompt)
 	ctx, cancel := context.WithTimeout(parent, r.Config.Timeout())
 	defer cancel()
 
-	cmd := shellForContext(ctx, command)
-	cmd.Dir = tmp
-	outputBytes, err := cmd.CombinedOutput()
-	output := string(outputBytes)
-	res.Output = trimOutput(output, r.Config.MaxOutputChars)
-	if err != nil {
+	reportFirstError := func(message string) {
+		if emitProgress == nil {
+			return
+		}
+		progress := res
+		progress.Success = false
+		progress.Error = message
+		progress.Duration = time.Since(started)
+		progress.DurationMS = progress.Duration.Milliseconds()
+		emitProgress(progress)
+	}
+	var executed attemptExecution
+	if r.commandBuilder != nil {
+		executed = runShellAttempt(ctx, r.shellCommand(model, prompt), tmp)
+	} else if r.Config.Provider == ProviderClaude {
+		executed = runClaudeHTTPAttempt(ctx, r.Config.BaseURL, model, prompt, reportFirstError)
+	} else {
+		executed = runCodexHTTPAttempt(ctx, r.Config.BaseURL, model, prompt, reportFirstError)
+	}
+	res.Output = trimOutput(executed.Output, r.Config.MaxOutputChars)
+	res.ExitCode = executed.ExitCode
+	if executed.Err != nil {
 		res.Success = false
-		res.Error = commandFailureMessage(err, output)
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			code := exitErr.ExitCode()
-			res.ExitCode = &code
+		res.Error = executed.LastError
+		if res.Error == "" {
+			res.Error = commandFailureMessage(executed.Err, executed.Output)
 		}
 		if ctx.Err() == context.DeadlineExceeded {
-			res.Error = fmt.Sprintf("timeout after %s", r.Config.Timeout())
+			res.Error = timeoutAttemptMessage(r.Config.Timeout(), executed.FirstError, executed.LastError)
 		}
 		if ctx.Err() == context.Canceled {
 			res.Error = context.Canceled.Error()
@@ -197,11 +212,39 @@ func (r Runner) runAttempt(parent context.Context, model string, prompt PromptCa
 	return res
 }
 
+func runShellAttempt(ctx context.Context, command, dir string) attemptExecution {
+	cmd := shellForContext(ctx, command)
+	cmd.Dir = dir
+	outputBytes, err := cmd.CombinedOutput()
+	output := string(outputBytes)
+	result := attemptExecution{Output: output, Err: err}
+	if err != nil {
+		result.LastError = commandFailureMessage(err, output)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			code := exitErr.ExitCode()
+			result.ExitCode = &code
+		}
+	}
+	return result
+}
+
+func timeoutAttemptMessage(timeout time.Duration, firstError, lastError string) string {
+	message := fmt.Sprintf("timeout after %s", timeout)
+	if firstError != "" {
+		message += "; first error: " + firstError
+	}
+	if lastError != "" && lastError != firstError {
+		message += "; last error: " + lastError
+	}
+	return message
+}
+
 func (r Runner) modelAttemptSpacing() time.Duration {
 	if r.attemptSpacing > 0 {
 		return r.attemptSpacing
 	}
-	return defaultAttemptSpacing
+	return r.Config.BatchMinInterval()
 }
 
 func waitForNextAttempt(ctx context.Context, previousStarted time.Time, spacing time.Duration) error {
@@ -223,13 +266,7 @@ func waitForNextAttempt(ctx context.Context, previousStarted time.Time, spacing 
 }
 
 func (r Runner) shellCommand(model string, prompt PromptCase) string {
-	if r.commandBuilder != nil {
-		return r.commandBuilder(model, prompt)
-	}
-	if r.Config.Provider == ProviderClaude {
-		return ClaudeShellCommand(r.Config.ClaudeCommand, model, prompt)
-	}
-	return CodexShellCommand(r.Config.CodexCommand, model, prompt)
+	return r.commandBuilder(model, prompt)
 }
 
 func commandFailureMessage(err error, output string) string {

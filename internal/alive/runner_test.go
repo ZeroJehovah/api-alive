@@ -9,20 +9,6 @@ import (
 
 const testAttemptSpacing = time.Millisecond
 
-func TestRunnerBuildsClaudeCommandWhenConfigured(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Provider = ProviderClaude
-	cfg.Models = []string{"sonnet"}
-	r := Runner{Config: cfg}
-
-	cmd := r.shellCommand("sonnet", PromptCase{Input: "Say OK."})
-	for _, want := range []string{"'claude' --model 'sonnet'", "--print", "--no-session-persistence", "'Say OK.'"} {
-		if !strings.Contains(cmd, want) {
-			t.Fatalf("command %q does not contain %q", cmd, want)
-		}
-	}
-}
-
 func TestRunnerRetriesUntilExpectedOutputMatches(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Models = []string{"a"}
@@ -232,16 +218,16 @@ func TestRunnerAttemptDurationsArePerAttempt(t *testing.T) {
 	}
 }
 
-func TestRunnerSpacesAttemptsBySendTime(t *testing.T) {
+func TestRunnerSpacesRepeatedAttemptsForOneModelBySendTime(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Models = []string{"a"}
 	cfg.ModelLoopCounts = map[string]int{"a": 2}
-	spacing := 80 * time.Millisecond
+	cfg.BatchMinIntervalSeconds = 1
+	spacing := time.Second
 	r := Runner{
 		Config:         cfg,
 		commandBuilder: staticCommand("echo NO"),
 		Prompts:        []PromptCase{{Input: "Say OK.", Expected: "OK"}},
-		attemptSpacing: spacing,
 	}
 
 	events, err := r.RunEvents(context.Background())
@@ -258,7 +244,22 @@ func TestRunnerSpacesAttemptsBySendTime(t *testing.T) {
 		t.Fatalf("attempt count = %d, want 2: %#v", len(attempts), attempts)
 	}
 	if got := attempts[1].AttemptStarted.Sub(attempts[0].AttemptStarted); got < spacing {
-		t.Fatalf("attempt send spacing = %s, want at least %s", got, spacing)
+		t.Fatalf("attempt send spacing for one model = %s, want at least %s", got, spacing)
+	}
+}
+
+func TestRunnerPerModelAttemptSpacingConfiguration(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.BatchMinIntervalSeconds = 5
+	if got := (Runner{Config: cfg}).modelAttemptSpacing(); got != 5*time.Second {
+		t.Fatalf("per-model spacing = %s, want 5s", got)
+	}
+	if got := (Runner{Config: cfg, attemptSpacing: 80 * time.Millisecond}).modelAttemptSpacing(); got != 80*time.Millisecond {
+		t.Fatalf("test spacing override = %s", got)
+	}
+	cfg.BatchMinIntervalSeconds = 0
+	if got := (Runner{Config: cfg}).modelAttemptSpacing(); got != 0 {
+		t.Fatalf("disabled per-model spacing = %s, want 0", got)
 	}
 }
 

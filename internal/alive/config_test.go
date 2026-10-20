@@ -1,6 +1,7 @@
 package alive
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -34,6 +35,62 @@ func TestLoadConfigMigratesMissingToken(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"token"`) {
 		t.Fatal("migrated config does not persist token")
+	}
+}
+
+func TestLoadConfigMigratesLegacyBaseURLAndBatchInterval(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	legacy := `{"models":["model-a"],"token":"test-token","codex_base_url":"https://cpa.example/v1","claude_base_url":"https://cpa.example"}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BaseURL != "https://cpa.example" || cfg.BatchMinIntervalSeconds != defaultBatchMinIntervalSeconds {
+		t.Fatalf("migrated config = base %q interval %d", cfg.BaseURL, cfg.BatchMinIntervalSeconds)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{`"base_url": "https://cpa.example"`, `"batch_min_interval_seconds": 5`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("saved config missing %q: %s", want, text)
+		}
+	}
+	for _, legacyKey := range []string{"codex_base_url", "claude_base_url"} {
+		if strings.Contains(text, legacyKey) {
+			t.Fatalf("saved config still contains %s: %s", legacyKey, text)
+		}
+	}
+}
+
+func TestLoadConfigPreservesExplicitZeroBatchInterval(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	input := `{"models":["model-a"],"token":"test-token","base_url":"https://cpa.example","batch_min_interval_seconds":0}`
+	if err := os.WriteFile(path, []byte(input), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BatchMinIntervalSeconds != 0 {
+		t.Fatalf("batch interval = %d, want 0", cfg.BatchMinIntervalSeconds)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted map[string]any
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted["batch_min_interval_seconds"] != float64(0) {
+		t.Fatalf("explicit zero interval was not preserved on disk: %s", data)
 	}
 }
 
@@ -79,12 +136,11 @@ func TestConfigDefaultsNewModelLoopCountToOne(t *testing.T) {
 func TestConfigDefaultsCommandsAndRejectsUnknownInternalProvider(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Provider = ""
-	cfg.CodexCommand = ""
-	cfg.ClaudeCommand = ""
+	cfg.BaseURL = ""
 	cfg.Models = []string{"a"}
 	cfg.ApplyDefaults()
-	if cfg.Provider != ProviderCodex || cfg.CodexCommand != "codex" || cfg.ClaudeCommand != "claude" {
-		t.Fatalf("defaults = provider %q codex %q claude %q", cfg.Provider, cfg.CodexCommand, cfg.ClaudeCommand)
+	if cfg.Provider != ProviderCodex || cfg.BaseURL != defaultBaseURL {
+		t.Fatalf("defaults = provider %q base URL %q", cfg.Provider, cfg.BaseURL)
 	}
 
 	cfg.Provider = "bad"

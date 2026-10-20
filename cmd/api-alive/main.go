@@ -36,15 +36,15 @@ type appState struct {
 }
 
 type configRequest struct {
-	Models          []string           `json:"models"`
-	ModelGroups     []alive.ModelGroup `json:"model_groups"`
-	ModelLoopCounts map[string]int     `json:"model_loop_counts"`
-	TimeoutSeconds  int                `json:"timeout_seconds"`
-	CodexCommand    string             `json:"codex_command"`
-	ClaudeCommand   string             `json:"claude_command"`
-	MaxOutputChars  int                `json:"max_output_chars"`
-	ListenAddr      string             `json:"listen_addr"`
-	Token           *string            `json:"token"`
+	Models                  []string           `json:"models"`
+	ModelGroups             []alive.ModelGroup `json:"model_groups"`
+	ModelLoopCounts         map[string]int     `json:"model_loop_counts"`
+	TimeoutSeconds          int                `json:"timeout_seconds"`
+	BaseURL                 string             `json:"base_url"`
+	BatchMinIntervalSeconds int                `json:"batch_min_interval_seconds"`
+	MaxOutputChars          int                `json:"max_output_chars"`
+	ListenAddr              string             `json:"listen_addr"`
+	Token                   *string            `json:"token"`
 }
 
 type modelsRequest struct {
@@ -233,8 +233,8 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	cfg.Models = req.Models
 	cfg.ModelLoopCounts = req.ModelLoopCounts
 	cfg.TimeoutSeconds = req.TimeoutSeconds
-	cfg.CodexCommand = strings.TrimSpace(req.CodexCommand)
-	cfg.ClaudeCommand = strings.TrimSpace(req.ClaudeCommand)
+	cfg.BaseURL = strings.TrimSpace(req.BaseURL)
+	cfg.BatchMinIntervalSeconds = req.BatchMinIntervalSeconds
 	cfg.MaxOutputChars = req.MaxOutputChars
 	cfg.ListenAddr = strings.TrimSpace(req.ListenAddr)
 	if req.Token != nil {
@@ -763,6 +763,11 @@ func (ts *taskStore) applyEvent(taskID, runID int64, event alive.Event) bool {
 		return false
 	}
 	now := time.Now().Format(time.RFC3339)
+	if event.Type == alive.EventAttemptProgress {
+		ts.task.Results = upsertResult(ts.task.Results, timestampResult(res, now))
+		ts.publishLocked()
+		return true
+	}
 	if event.Type == alive.EventAttempt {
 		ts.task.Results = upsertResult(ts.task.Results, timestampResult(displayAttemptResult(res, ts.loopCountForModel(res.Model)), now))
 		ts.prependLogLocked(now, res)

@@ -17,12 +17,12 @@ type Config struct {
 	ModelLoopCounts map[string]int `json:"model_loop_counts,omitempty"`
 	TimeoutSeconds  int            `json:"timeout_seconds"`
 	// LoopCount is kept only for backward compatibility with older config files.
-	LoopCount      int    `json:"loop_count,omitempty"`
-	CodexCommand   string `json:"codex_command"`
-	ClaudeCommand  string `json:"claude_command"`
-	ListenAddr     string `json:"listen_addr"`
-	MaxOutputChars int    `json:"max_output_chars"`
-	Token          string `json:"token"`
+	LoopCount               int    `json:"loop_count,omitempty"`
+	BaseURL                 string `json:"base_url"`
+	BatchMinIntervalSeconds int    `json:"batch_min_interval_seconds"`
+	ListenAddr              string `json:"listen_addr"`
+	MaxOutputChars          int    `json:"max_output_chars"`
+	Token                   string `json:"token"`
 }
 
 type ModelGroup struct {
@@ -32,19 +32,21 @@ type ModelGroup struct {
 }
 
 const (
-	ProviderCodex  = "codex"
-	ProviderClaude = "claude"
+	ProviderCodex                  = "codex"
+	ProviderClaude                 = "claude"
+	defaultBaseURL                 = "https://cpa.aiof.top"
+	defaultBatchMinIntervalSeconds = 5
 )
 
 func DefaultConfig() Config {
 	return Config{
-		Provider:       ProviderCodex,
-		TimeoutSeconds: 120,
-		CodexCommand:   "codex",
-		ClaudeCommand:  "claude",
-		ListenAddr:     "0.0.0.0:8080",
-		MaxOutputChars: 4000,
-		Token:          newAccessToken(),
+		Provider:                ProviderCodex,
+		TimeoutSeconds:          120,
+		BaseURL:                 defaultBaseURL,
+		BatchMinIntervalSeconds: defaultBatchMinIntervalSeconds,
+		ListenAddr:              "0.0.0.0:8080",
+		MaxOutputChars:          4000,
+		Token:                   newAccessToken(),
 	}
 }
 
@@ -60,9 +62,28 @@ func LoadConfig(path string) (Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return cfg, err
 	}
-	needsTokenPersist := strings.TrimSpace(cfg.Token) == ""
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return cfg, err
+	}
+	if strings.TrimSpace(cfg.BaseURL) == "" {
+		cfg.BaseURL = legacyBaseURL(raw)
+	}
+	_, hasBaseURL := raw["base_url"]
+	_, hasBatchMinInterval := raw["batch_min_interval_seconds"]
+	_, hasLegacyCodexBaseURL := raw["codex_base_url"]
+	_, hasLegacyClaudeBaseURL := raw["claude_base_url"]
+	if !hasBatchMinInterval {
+		cfg.BatchMinIntervalSeconds = defaultBatchMinIntervalSeconds
+	}
+	needsPersist := strings.TrimSpace(cfg.Token) == "" ||
+		strings.TrimSpace(cfg.BaseURL) == "" ||
+		!hasBaseURL ||
+		!hasBatchMinInterval ||
+		hasLegacyCodexBaseURL ||
+		hasLegacyClaudeBaseURL
 	cfg.ApplyDefaults()
-	if needsTokenPersist {
+	if needsPersist {
 		if err := SaveConfig(path, cfg); err != nil {
 			return cfg, err
 		}
@@ -85,11 +106,11 @@ func (c *Config) ApplyDefaults() {
 	if c.TimeoutSeconds <= 0 {
 		c.TimeoutSeconds = 120
 	}
-	if c.CodexCommand == "" {
-		c.CodexCommand = "codex"
+	if c.BaseURL == "" {
+		c.BaseURL = defaultBaseURL
 	}
-	if c.ClaudeCommand == "" {
-		c.ClaudeCommand = "claude"
+	if c.BatchMinIntervalSeconds < 0 {
+		c.BatchMinIntervalSeconds = 0
 	}
 	if c.ListenAddr == "" {
 		c.ListenAddr = "0.0.0.0:8080"
@@ -147,6 +168,36 @@ func (c Config) ValidateProviders() error {
 
 func (c Config) Timeout() time.Duration {
 	return time.Duration(c.TimeoutSeconds) * time.Second
+}
+
+func (c Config) BatchMinInterval() time.Duration {
+	if c.BatchMinIntervalSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(c.BatchMinIntervalSeconds) * time.Second
+}
+
+func legacyBaseURL(raw map[string]json.RawMessage) string {
+	for _, key := range []string{"codex_base_url", "claude_base_url"} {
+		var value string
+		if json.Unmarshal(raw[key], &value) != nil {
+			continue
+		}
+		if base := rootBaseURL(value); base != "" {
+			return base
+		}
+	}
+	return ""
+}
+
+func rootBaseURL(value string) string {
+	base := strings.TrimRight(strings.TrimSpace(value), "/")
+	for _, suffix := range []string{"/v1/responses", "/responses", "/v1/messages", "/messages", "/v1"} {
+		if strings.HasSuffix(base, suffix) {
+			return strings.TrimRight(strings.TrimSuffix(base, suffix), "/")
+		}
+	}
+	return base
 }
 
 func (c Config) ProviderForModel(model string) string {

@@ -177,7 +177,8 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`.settings input, .settings button`,
 		`<option value="codex">Codex</option>`,
 		`<option value="claude">Claude</option>`,
-		`id="claudeCommand"`,
+		`id="baseURL"`,
+		`id="batchMinIntervalSeconds"`,
 		`function providerValue`,
 		`function providerLabel`,
 		`function providerIconHTML`,
@@ -197,9 +198,11 @@ func TestIndexHTMLContainsModelOrderAndStandaloneLogPanel(t *testing.T) {
 		`statHTML('Failed', stats.failed`,
 		`statHTML('Running', stats.running`,
 		`class="group-provider-select"`,
-		`config.claude_command || 'claude'`,
+		`config.base_url || ''`,
+		`config.batch_min_interval_seconds ?? 5`,
 		`delete cfg.provider;`,
-		`cfg.claude_command = $('claudeCommand').value.trim() || 'claude';`,
+		`cfg.base_url = $('baseURL').value.trim();`,
+		`cfg.batch_min_interval_seconds = Math.max(0, Number($('batchMinIntervalSeconds').value) || 0);`,
 		`min-height: 52px`,
 		`class="live-dot"`,
 		`blue-breathe`,
@@ -396,11 +399,8 @@ func TestStateCreatesDefaultConfig(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &state); err != nil {
 		t.Fatal(err)
 	}
-	if state.Config.CodexCommand != "codex" {
-		t.Fatalf("codex command = %q", state.Config.CodexCommand)
-	}
-	if state.Config.ClaudeCommand != "claude" {
-		t.Fatalf("claude command = %q", state.Config.ClaudeCommand)
+	if state.Config.BaseURL != "https://cpa.aiof.top" {
+		t.Fatalf("base URL = %q", state.Config.BaseURL)
 	}
 	if bytes.Contains(rec.Body.Bytes(), []byte(`"provider"`)) {
 		t.Fatalf("state JSON should not expose top-level provider: %s", rec.Body.String())
@@ -504,7 +504,7 @@ func TestModelsEndpointAddsAndDeletesModels(t *testing.T) {
 func TestConfigEndpointUpdatesRuntime(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	srv := newServer(configPath)
-	body := bytes.NewBufferString(`{"models":["sonnet"],"model_groups":[{"name":"Claude","provider":"claude","models":["sonnet"]}],"model_loop_counts":{"sonnet":2},"timeout_seconds":30,"codex_command":"codex-beta","claude_command":"claude-beta","listen_addr":"127.0.0.1:0","max_output_chars":1234}`)
+	body := bytes.NewBufferString(`{"models":["sonnet"],"model_groups":[{"name":"Claude","provider":"claude","models":["sonnet"]}],"model_loop_counts":{"sonnet":2},"timeout_seconds":30,"base_url":"http://127.0.0.1:9000","batch_min_interval_seconds":7,"listen_addr":"127.0.0.1:0","max_output_chars":1234}`)
 
 	rec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/config", body))
@@ -515,7 +515,7 @@ func TestConfigEndpointUpdatesRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.TimeoutSeconds != 30 || cfg.ModelLoopCounts["sonnet"] != 2 || cfg.CodexCommand != "codex-beta" || cfg.ClaudeCommand != "claude-beta" || cfg.ListenAddr != "127.0.0.1:0" || cfg.MaxOutputChars != 1234 {
+	if cfg.TimeoutSeconds != 30 || cfg.ModelLoopCounts["sonnet"] != 2 || cfg.BaseURL != "http://127.0.0.1:9000" || cfg.BatchMinIntervalSeconds != 7 || cfg.ListenAddr != "127.0.0.1:0" || cfg.MaxOutputChars != 1234 {
 		t.Fatalf("unexpected config: %#v", cfg)
 	}
 	if got := cfg.ProviderForModel("sonnet"); got != alive.ProviderClaude {
@@ -526,7 +526,7 @@ func TestConfigEndpointUpdatesRuntime(t *testing.T) {
 func TestConfigEndpointPreservesModelOrder(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	srv := newServer(configPath)
-	body := bytes.NewBufferString(`{"models":["model-b","model-a","model-b","model-c"],"model_loop_counts":{"model-b":2,"model-a":3,"model-c":4},"timeout_seconds":30,"codex_command":"codex","listen_addr":"127.0.0.1:0","max_output_chars":4000}`)
+	body := bytes.NewBufferString(`{"models":["model-b","model-a","model-b","model-c"],"model_loop_counts":{"model-b":2,"model-a":3,"model-c":4},"timeout_seconds":30,"listen_addr":"127.0.0.1:0","max_output_chars":4000}`)
 
 	rec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/config", body))
@@ -539,7 +539,7 @@ func TestConfigEndpointPreservesModelOrder(t *testing.T) {
 func TestConfigEndpointPersistsModelGroups(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	srv := newServer(configPath)
-	body := bytes.NewBufferString(`{"models":["model-b","model-a","model-c"],"model_groups":[{"name":"fast","provider":"codex","models":["model-b","model-a"]},{"name":"slow","provider":"claude","models":["model-c"]}],"model_loop_counts":{"model-b":2,"model-a":3,"model-c":4},"timeout_seconds":30,"codex_command":"codex","listen_addr":"127.0.0.1:0","max_output_chars":4000}`)
+	body := bytes.NewBufferString(`{"models":["model-b","model-a","model-c"],"model_groups":[{"name":"fast","provider":"codex","models":["model-b","model-a"]},{"name":"slow","provider":"claude","models":["model-c"]}],"model_loop_counts":{"model-b":2,"model-a":3,"model-c":4},"timeout_seconds":30,"listen_addr":"127.0.0.1:0","max_output_chars":4000}`)
 
 	rec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/config", body))
@@ -562,7 +562,7 @@ func TestConfigEndpointPersistsModelGroups(t *testing.T) {
 	}
 }
 
-func TestProbeRunnerConfigDoesNotExpandBatchGroups(t *testing.T) {
+func TestProbeRunnerConfigKeepsSelectedGroups(t *testing.T) {
 	cfg := alive.DefaultConfig()
 	cfg.ModelGroups = []alive.ModelGroup{
 		{Name: "fast", Provider: alive.ProviderCodex, Models: []string{"model-a", "model-b"}},
@@ -605,6 +605,10 @@ func TestProbeRunnerConfigDoesNotExpandBatchGroups(t *testing.T) {
 	claudeCfg.ApplyDefaults()
 	if claudeCfg.Provider != alive.ProviderClaude {
 		t.Fatalf("single-model provider = %q, want claude", claudeCfg.Provider)
+	}
+	singleCfg := probeRunnerConfig(cfg, []string{"model-a"})
+	if !reflect.DeepEqual(singleCfg.Models, []string{"model-a"}) {
+		t.Fatalf("single-model runner models = %#v, want model-a only", singleCfg.Models)
 	}
 }
 
@@ -697,6 +701,38 @@ func TestProbeTaskLifecyclePersistsStateAndAllowsConcurrentDistinctModels(t *tes
 	}
 	if _, _, err := store.start([]string{"model-c"}, map[string]int{"model-c": 2}); err != nil {
 		t.Fatalf("start after finish failed: %v", err)
+	}
+}
+
+func TestProbeTaskProgressShowsFirstErrorWithoutCompletingRun(t *testing.T) {
+	store := &taskStore{}
+	task, runs, err := store.start([]string{"model-a"}, map[string]int{"model-a": 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied := store.applyEvent(task.ID, runIDByModel(t, runs, "model-a"), alive.Event{
+		Type: alive.EventAttemptProgress,
+		Result: alive.Result{
+			Model:      "model-a",
+			Attempts:   1,
+			Success:    false,
+			Error:      "upstream returned 502 Bad Gateway",
+			DurationMS: 25,
+		},
+	})
+	if !applied {
+		t.Fatal("progress event was rejected")
+	}
+	snapshot := store.snapshot()
+	if !snapshot.Running || !reflect.DeepEqual(snapshot.RunningModels, []string{"model-a"}) {
+		t.Fatalf("progress event completed the run: %#v", snapshot)
+	}
+	result := resultByModel(snapshot.Results, "model-a")
+	if result.Error != "upstream returned 502 Bad Gateway" || result.Attempts != 1 {
+		t.Fatalf("progress result = %#v", result)
+	}
+	if len(snapshot.Logs) != 0 {
+		t.Fatalf("progress event should not append a completed-attempt log: %#v", snapshot.Logs)
 	}
 }
 
@@ -982,14 +1018,30 @@ func TestProbeTaskStartPreservesPreviousLogsAndUnselectedResults(t *testing.T) {
 
 func TestProbeEndpointAllowsDistinctConcurrentRequestsRejectsDuplicateAndStops(t *testing.T) {
 	dir := t.TempDir()
-	commandPath := filepath.Join(dir, "fake-codex")
-	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\nsleep 2\necho OK\n"), 0o755); err != nil {
+	codexHome := filepath.Join(dir, "codex-home")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	authPath := filepath.Join(codexHome, "auth.json")
+	if err := os.WriteFile(authPath, []byte(`{"OPENAI_API_KEY":"test-key"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codexHome, "installation_id"), []byte("test-installation"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("CODEX_AUTH_FILE", authPath)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(5 * time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	defer upstream.Close()
 	configPath := filepath.Join(dir, "config.json")
 	cfg := alive.DefaultConfig()
 	cfg.Models = []string{"model-a", "model-b"}
-	cfg.CodexCommand = commandPath
+	cfg.BaseURL = upstream.URL
 	if err := alive.SaveConfig(configPath, cfg); err != nil {
 		t.Fatal(err)
 	}

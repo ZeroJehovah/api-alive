@@ -6,8 +6,8 @@
   ],
   "model_loop_counts": {"gpt-5": 1, "sonnet": 1},
   "timeout_seconds": 120,
-  "codex_command": "codex",
-  "claude_command": "claude",
+  "base_url": "https://cpa.aiof.top",
+  "batch_min_interval_seconds": 5,
   "listen_addr": "0.0.0.0:8080",
   "max_output_chars": 4000
 }
